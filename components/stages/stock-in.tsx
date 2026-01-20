@@ -8,6 +8,7 @@ import StageHeader from '@/components/stage-header';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { 
   getStockIn,
+  acceptStockItems,
   type StockInItem 
 } from '@/lib/workflow-storage';
 
@@ -40,9 +41,7 @@ const StockIn = () => {
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
   const [stockItems, setStockItems] = useState<StockInItem[]>([]);
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
-  const [showAcceptForm, setShowAcceptForm] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState<string>('');
-  const [acceptQty, setAcceptQty] = useState<string>('');
+  const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const items = getStockIn();
@@ -104,29 +103,49 @@ const StockIn = () => {
     }
   };
 
+  const handleToggleProduct = (productKey: string) => {
+    const newSelected = new Set(selectedProducts);
+    if (newSelected.has(productKey)) {
+      newSelected.delete(productKey);
+    } else {
+      newSelected.add(productKey);
+    }
+    setSelectedProducts(newSelected);
+  };
+
+  const handleToggleAll = () => {
+    const pendingAggregated = aggregateStock(pendingStock);
+    if (selectedProducts.size === pendingAggregated.length) {
+      setSelectedProducts(new Set());
+    } else {
+      setSelectedProducts(new Set(pendingAggregated.map(a => a.productKey)));
+    }
+  };
+
   const handleAcceptSubmit = () => {
-    if (!selectedProduct || !acceptQty) {
-      alert('Please select a product and enter accepted quantity');
+    if (selectedProducts.size === 0) {
+      alert('Please select at least one product to accept');
       return;
     }
 
-    // TODO: Implement accept submission logic
-    alert('Stock acceptance will be implemented');
+    // Convert selected product keys to array and accept them
+    const productKeysArray = Array.from(selectedProducts);
+    acceptStockItems(productKeysArray);
     
-    setShowAcceptForm(false);
-    setSelectedProduct('');
-    setAcceptQty('');
+    // Refresh the stock items from localStorage to show updated status
+    const updatedItems = getStockIn();
+    setStockItems(updatedItems);
+    
+    // Clear selection
+    setSelectedProducts(new Set());
+    
+    alert(`Successfully accepted ${productKeysArray.length} product(s) to stock`);
   };
 
   const pendingStock = stockItems.filter((s) => s.status === 'Pending');
   const historyStock = stockItems.filter((s) => s.status !== 'Pending');
   const displayStock = activeTab === 'pending' ? pendingStock : historyStock;
   const aggregatedStock = aggregateStock(displayStock);
-
-  const uniqueProducts = aggregateStock(pendingStock).map(a => ({
-    key: a.productKey,
-    name: `${a.productName}${a.packingSize ? ' ' + a.packingSize : ''}`
-  }));
 
   return (
     <div className="p-6 bg-background">
@@ -162,11 +181,12 @@ const StockIn = () => {
 
         {activeTab === 'pending' && pendingStock.length > 0 && (
           <Button 
-            onClick={() => setShowAcceptForm(true)}
+            onClick={handleAcceptSubmit}
             className="flex items-center gap-2"
+            disabled={selectedProducts.size === 0}
           >
             <Plus className="h-4 w-4" />
-            Accept Stock
+            Accept Stock ({selectedProducts.size})
           </Button>
         )}
       </div>
@@ -177,6 +197,16 @@ const StockIn = () => {
           <table className="w-full">
             <thead className="bg-card border-b border-border">
               <tr>
+                {activeTab === 'pending' && (
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-foreground w-12">
+                    <input
+                      type="checkbox"
+                      checked={selectedProducts.size === aggregatedStock.length && aggregatedStock.length > 0}
+                      onChange={handleToggleAll}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground w-8"></th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Product Name</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Finished Qty</th>
@@ -193,10 +223,22 @@ const StockIn = () => {
                   <>
                     <tr 
                       key={aggregate.productKey} 
-                      className="hover:bg-card/50 transition-colors cursor-pointer"
-                      onClick={() => setExpandedProduct(isExpanded ? null : aggregate.productKey)}
+                      className="hover:bg-card/50 transition-colors"
                     >
-                      <td className="px-4 py-3 text-sm">
+                      {activeTab === 'pending' && (
+                        <td className="px-4 py-3 text-sm" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedProducts.has(aggregate.productKey)}
+                            onChange={() => handleToggleProduct(aggregate.productKey)}
+                            className="w-4 h-4 cursor-pointer"
+                          />
+                        </td>
+                      )}
+                      <td 
+                        className="px-4 py-3 text-sm cursor-pointer"
+                        onClick={() => setExpandedProduct(isExpanded ? null : aggregate.productKey)}
+                      >
                         {isExpanded ? (
                           <ChevronDown className="h-4 w-4 text-muted-foreground" />
                         ) : (
@@ -223,7 +265,7 @@ const StockIn = () => {
                     {/* Expanded Party Details */}
                     {isExpanded && (
                       <tr>
-                        <td colSpan={6} className="px-4 py-2 bg-card/30">
+                        <td colSpan={activeTab === 'pending' ? 7 : 6} className="px-4 py-2 bg-card/30">
                           <div className="pl-8">
                             {aggregate.partyDetails && aggregate.partyDetails.length > 0 ? (
                               <>
@@ -271,65 +313,7 @@ const StockIn = () => {
         )}
       </Card>
 
-      {/* Accept Stock Form Modal */}
-      {showAcceptForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <h2 className="text-lg font-bold text-foreground mb-4">Accept Stock</h2>
-              
-              {/* Product Selection */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-foreground mb-2">Select Product</label>
-                <select
-                  value={selectedProduct}
-                  onChange={(e) => setSelectedProduct(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
-                >
-                  <option value="">-- Select Product --</option>
-                  {uniqueProducts.map(product => (
-                    <option key={product.key} value={product.key}>{product.name}</option>
-                  ))}
-                </select>
-              </div>
 
-              {/* Accept Quantity Input */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Accepted Quantity <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  value={acceptQty}
-                  onChange={(e) => setAcceptQty(e.target.value)}
-                  placeholder="Enter accepted quantity"
-                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowAcceptForm(false);
-                    setSelectedProduct('');
-                    setAcceptQty('');
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button 
-                  onClick={handleAcceptSubmit}
-                  className="bg-primary hover:bg-primary/90"
-                  disabled={!selectedProduct || !acceptQty}
-                >
-                  Accept to Stock
-                </Button>
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
     </div>
   );
 };

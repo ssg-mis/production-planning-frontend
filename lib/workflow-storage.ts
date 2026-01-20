@@ -611,6 +611,33 @@ export function moveToStockIn(item: ProductionEntryItem): void {
   localStorage.setItem(KEYS.PRODUCTION_ENTRIES, JSON.stringify(productions));
 }
 
+// Accept stock items - move from Pending to Accepted
+export function acceptStockItems(productKeys: string[]): void {
+  if (typeof window === "undefined") return;
+  const stockItems = getStockIn();
+  
+  // Update status of all items matching the product keys
+  const updatedItems = stockItems.map(item => {
+    const itemKey = `${item.productName}${item.packingSize ? ' ' + item.packingSize : ''}`
+      .toUpperCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    // If this item's product key is in the list to accept
+    if (productKeys.some(key => key === itemKey)) {
+      return {
+        ...item,
+        status: "Accepted" as const,
+        acceptedQty: item.finishedQty // Set accepted quantity to finished quantity
+      };
+    }
+    return item;
+  });
+  
+  localStorage.setItem(KEYS.STOCK_IN, JSON.stringify(updatedItems));
+}
+
+
 
 // Helper function
 function generateLots(

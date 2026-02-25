@@ -8,7 +8,6 @@ import StageHeader from '@/components/stage-header';
 import TableSkeleton from '@/components/table-skeleton';
 import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -63,6 +62,8 @@ interface OilTypeGroup {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
 const formatNumber = (num: number | undefined) => {
   if (num === undefined || num === null) return '-';

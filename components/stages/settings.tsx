@@ -8,7 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import StageHeader from '@/components/stage-header';
 import { Plus, Pencil, Trash2, X, Check } from 'lucide-react';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
 const ALL_PAGES = [
   { id: 'dashboard', label: 'Dashboard' },

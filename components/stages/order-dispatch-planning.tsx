@@ -10,7 +10,6 @@ import TableSkeleton from '@/components/table-skeleton';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { 
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
   getDispatchOrders,
   saveDispatchOrder,
   getProductStock,
@@ -19,6 +18,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
 } from '@/lib/workflow-storage';
 
 // Normalize product key
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
+
 const normalizeProductKey = (productName: string): string => {
   return productName.toUpperCase().replace(/\s+/g, ' ').trim();
 };

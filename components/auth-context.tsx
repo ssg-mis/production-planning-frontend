@@ -2,7 +2,6 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
 
 interface User {
   id: number;
@@ -23,6 +22,8 @@ interface AuthContextType {
   isAdmin: boolean;
   canAccess: (page: string) => boolean;
 }
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
 const AuthContext = createContext<AuthContextType | null>(null);
 

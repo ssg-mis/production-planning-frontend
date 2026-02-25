@@ -8,7 +8,8 @@ import StageHeader from '@/components/stage-header';
 import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
 import TableSkeleton from '@/components/table-skeleton';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
 const BalanceMaterialReceipt = () => {
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');

@@ -7,7 +7,8 @@ import StageHeader from '@/components/stage-header';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import TableSkeleton from '@/components/table-skeleton';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
 const Reports = () => {
   const [data, setData] = useState<any>(null);

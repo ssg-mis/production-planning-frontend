@@ -9,11 +9,12 @@ import TableSkeleton from '@/components/table-skeleton';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import {
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
   getProductStock,
   initializeDefaultStocks,
   type LabConfirmationItem,
 } from '@/lib/workflow-storage';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
 const SOYA_PARAMETERS = [
   { item: 'FFA', standard: '0.1 MAX' },

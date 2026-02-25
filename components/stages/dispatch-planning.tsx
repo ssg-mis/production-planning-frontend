@@ -9,10 +9,11 @@ import TableSkeleton from '@/components/table-skeleton';
 import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
 import {
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
   getProductStock,
   initializeDefaultStocks,
 } from '@/lib/workflow-storage';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
 const PALM_ADDITIVES = [
   { item: 'TBHQ', weight: '150 GM PER MT', vendor: 'HEERA & SONS', costExGst: '700/KG', costPerMt: 105, stdWtGm: 150, ratePerKg: 700 },

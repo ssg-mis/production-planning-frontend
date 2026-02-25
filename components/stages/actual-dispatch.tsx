@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import StageHeader from '@/components/stage-header';
+import TableSkeleton from '@/components/table-skeleton';
 
 interface DispatchOrder {
   id: string;
@@ -26,6 +27,16 @@ const ActualDispatch = () => {
       status: 'Completed',
     },
   ]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Simulate API fetch delay
+    setLoading(true);
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [activeTab]);
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
@@ -87,21 +98,25 @@ const ActualDispatch = () => {
               <th className="px-6 py-3 text-left text-sm font-semibold text-foreground">Status</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border">
-            {displayOrders.map((order) => (
-              <tr key={order.id} className="hover:bg-card/50 transition-colors">
-                <td className="px-6 py-4 text-sm text-foreground font-medium">{order.orderRef}</td>
-                <td className="px-6 py-4 text-sm text-foreground">{order.product}</td>
-                <td className="px-6 py-4 text-sm text-foreground">{order.dispatchedQty}</td>
-                <td className="px-6 py-4 text-sm text-foreground">{order.date}</td>
-                <td className="px-6 py-4 text-sm">
-                  <Badge className={getStatusColor(order.status)}>{order.status}</Badge>
-                </td>
-              </tr>
-            ))}
-          </tbody>
+          {loading ? (
+            <TableSkeleton cols={5} rows={3} />
+          ) : (
+            <tbody className="divide-y divide-border">
+              {displayOrders.map((order) => (
+                <tr key={order.id} className="hover:bg-card/50 transition-colors">
+                  <td className="px-6 py-4 text-sm text-foreground font-medium">{order.orderRef}</td>
+                  <td className="px-6 py-4 text-sm text-foreground">{order.product}</td>
+                  <td className="px-6 py-4 text-sm text-foreground">{order.dispatchedQty}</td>
+                  <td className="px-6 py-4 text-sm text-foreground">{order.date}</td>
+                  <td className="px-6 py-4 text-sm">
+                    <Badge className={getStatusColor(order.status)}>{order.status}</Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          )}
         </table>
-        {displayOrders.length === 0 && (
+        {!loading && displayOrders.length === 0 && (
           <div className="p-8 text-center text-muted-foreground">
             No {activeTab === 'pending' ? 'pending' : 'history'} dispatches
           </div>

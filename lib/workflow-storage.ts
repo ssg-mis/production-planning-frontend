@@ -1,17 +1,22 @@
 // Dispatch Order for Order Dispatch Planning
 export interface DispatchOrder {
   id: string;
-  indentNo: string;
-  dispatchPlanRef: string;
-  customerName: string;
+  indentNo?: string;
+  dispatchPlanRef?: string;
+  customerName?: string;
   productName: string;
-  packingSize: string; // e.g., "15 kg", "13 kg", "1 ltr"
-  plannedQty: number;
-  packingType: string;
-  dispatchDate: string;
-  priority: string;
+  packingSize?: string; // e.g., "15 kg", "13 kg", "1 ltr"
+  plannedQty?: number;
+  totalQuantity?: number; // For aggregated display
+  tankSize?: string; // e.g., "5 MT each"
+  totalLots?: number; // Calculated based on tank size
+  packingType?: string;
+  dispatchDate?: string;
+  deliveryDate?: string;
+  priority?: string;
   status: string;
   createdAt: string;
+  orderNo?: string;
 }
 
 // Party Product Detail for Oil Indent
@@ -21,6 +26,7 @@ export interface PartyProductDetail {
   packingSize: string;
   quantity: number;
   packingType: string;
+  orderRef?: string;
 }
 
 // Product Stock Interface
@@ -45,6 +51,7 @@ export interface OilIndentItem {
   packingType?: string; // Added for packing type tracking
   availableStock?: number; // Available stock for this product
   shortage?: number; // Calculated shortage
+  tankNo?: string; // Tank Number selected during indent
 }
 
 // Oil Indent with Parties (for aggregation view)
@@ -63,6 +70,7 @@ export interface LabConfirmationItem extends OilIndentItem {
   labDate?: string;
   sampleResult?: string;
   confirmed?: boolean;
+  labReportGivenBy?: string; // Added field
 }
 
 // Dispatch Planning
@@ -79,6 +87,11 @@ export interface DispatchPlanItem {
     size: number;
     additives?: string;
   }>;
+  additiveDetails?: Array<{
+    name: string;
+    quantity: number;
+    unit: string;
+  }>;
   status: "Pending" | "Planned" | "Received";
 }
 
@@ -87,6 +100,11 @@ export interface OilReceiptItem extends OilIndentItem {
   receivedDate?: string;
   receivedQty?: number;
   receivedBy?: string;
+  additiveDetails?: Array<{
+    name: string;
+    quantity: number;
+    unit: string;
+  }>;
 }
 
 // Raw Material Workflow
@@ -296,6 +314,7 @@ export function moveToDispatchPlanning(item: LabConfirmationItem): void {
     packingType: item.packingType,
     totalQty: item.indentQuantity,
     lots: generateLots(item.productName, item.indentQuantity),
+    additiveDetails: [], // Initialize empty additives
     status: "Planned",
   };
   
@@ -339,6 +358,7 @@ export function moveToOilReceipt(item: DispatchPlanItem): void {
     createdAt: new Date().toISOString(),
     status: "Pending",
     receivedDate: undefined,
+    additiveDetails: item.additiveDetails || [],
   };
   
   if (existingIndex >= 0) {

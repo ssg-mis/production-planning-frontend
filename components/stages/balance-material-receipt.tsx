@@ -5,92 +5,75 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import StageHeader from '@/components/stage-header';
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
-import { 
-  getBalanceReceipts,
-  type BalanceMaterialReceiptItem 
-} from '@/lib/workflow-storage';
+import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
+import TableSkeleton from '@/components/table-skeleton';
 
-// Normalize product key
-const normalizeProductKey = (productName: string, packingSize?: string): string => {
-  const normalized = `${productName}${packingSize ? ' ' + packingSize : ''}`
-    .toUpperCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-  return normalized;
-};
-
-interface AggregatedBalance {
-  productKey: string;
-  productName: string;
-  packingSize?: string;
-  totalVarianceQty: number;
-  totalReceivedQty: number;
-  status: string;
-  balanceItems: BalanceMaterialReceiptItem[];
-  partyDetails: Array<{
-    orderRef: string;
-    partyName: string;
-    quantity: number;
-    packingType: string;
-  }>;
-}
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
 
 const BalanceMaterialReceipt = () => {
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
-  const [balanceItems, setBalanceItems] = useState<BalanceMaterialReceiptItem[]>([]);
-  const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
   const [showReceiptForm, setShowReceiptForm] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState<string>('');
-  const [receiptQuantity, setReceiptQuantity] = useState<string>('');
+  const [selectedEntry, setSelectedEntry] = useState<any>(null);
+  const [materialReceipts, setMaterialReceipts] = useState<Record<string, number>>({});
+  const [remarks, setRemarks] = useState('');
+
+  const fetchItems = async () => {
+    setLoading(true);
+    try {
+      const endpoint = activeTab === 'pending' ? '/pending' : '/history';
+      const response = await fetch(`${API_BASE_URL}/balance-material-receipt${endpoint}`);
+      const data = await response.json();
+      setItems(data || []);
+    } catch (error) {
+      console.error('Error fetching balance receipts:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const items = getBalanceReceipts();
-    setBalanceItems(items);
-  }, []);
+    fetchItems();
+  }, [activeTab]);
 
-  // Aggregate balance items by product
-  const aggregateBalances = (items: BalanceMaterialReceiptItem[]): AggregatedBalance[] => {
-    const aggregated: { [key: string]: AggregatedBalance } = {};
+  const handleReceiptSubmit = async () => {
+    if (!selectedEntry) return;
 
-    items.forEach(item => {
-      const productKey = normalizeProductKey(item.productName, item.packingSize);
-      
-      if (!aggregated[productKey]) {
-        aggregated[productKey] = {
-          productKey,
-          productName: item.productName,
-          packingSize: item.packingSize,
-          totalVarianceQty: 0,
-          totalReceivedQty: 0,
-          status: item.status,
-          balanceItems: [],
-          partyDetails: []
-        };
-      }
+    try {
+      const payload = {
+        productionId: selectedEntry.production_id,
+        receivedBy: 'Store Head',
+        remarks,
+        materialReceipts: selectedEntry.varianceItems.map((item: any) => ({
+          material: item.material,
+          planned: item.planned,
+          actual: item.actual,
+          varianceUsed: item.diff,
+          returned: item.returned,
+          damaged: item.damaged,
+          receivedQty: materialReceipts[item.material] || 0
+        }))
+      };
 
-      aggregated[productKey].totalVarianceQty += item.varianceQty;
-      aggregated[productKey].totalReceivedQty += item.receivedQty;
-      aggregated[productKey].balanceItems.push(item);
+      const response = await fetch(`${API_BASE_URL}/balance-material-receipt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
 
-      // Add party details if available
-      if (item.orderRef && item.partyName) {
-        // Check if this party is already added
-        const exists = aggregated[productKey].partyDetails.find(
-          p => p.orderRef === item.orderRef && p.partyName === item.partyName
-        );
-        if (!exists) {
-          aggregated[productKey].partyDetails.push({
-            orderRef: item.orderRef,
-            partyName: item.partyName,
-            quantity: item.varianceQty,
-            packingType: item.packingType || '-'
-          });
-        }
-      }
-    });
+      if (!response.ok) throw new Error('Failed to submit balance receipt');
 
-    return Object.values(aggregated);
+      setShowReceiptForm(false);
+      setSelectedEntry(null);
+      setMaterialReceipts({});
+      setRemarks('');
+      fetchItems();
+    } catch (error) {
+      console.error('Error submitting balance receipt:', error);
+      alert('Failed to submit balance receipt');
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -104,38 +87,18 @@ const BalanceMaterialReceipt = () => {
     }
   };
 
-  const handleReceiptSubmit = () => {
-    if (!selectedProduct || !receiptQuantity) {
-      alert('Please select a product and enter received quantity');
-      return;
-    }
-
-    // TODO: Implement receipt submission logic
-    alert('Balance receipt submission will be implemented');
-    
-    setShowReceiptForm(false);
-    setSelectedProduct('');
-    setReceiptQuantity('');
+  const formatNumber = (num: any) => {
+    const n = Number(num);
+    return isNaN(n) ? '0' : n.toLocaleString('en-IN');
   };
 
-  const pendingBalances = balanceItems.filter((b) => b.status === 'Pending');
-  const historyBalances = balanceItems.filter((b) => b.status !== 'Pending');
-  const displayBalances = activeTab === 'pending' ? pendingBalances : historyBalances;
-  const aggregatedBalances = aggregateBalances(displayBalances);
-
-  const uniqueProducts = aggregateBalances(pendingBalances).map(a => ({
-    key: a.productKey,
-    name: `${a.productName}${a.packingSize ? ' ' + a.packingSize : ''}`
-  }));
-
   return (
-    <div className="p-6 bg-background">
+    <div className="p-6 bg-background min-h-screen">
       <StageHeader
         title="Balance Material Receipt"
         description="Record receipt of leftover/balance materials from production"
       />
 
-      {/* Tabs and Action Button */}
       <div className="flex justify-between items-center mb-6">
         <div className="flex gap-2">
           <button
@@ -159,172 +122,141 @@ const BalanceMaterialReceipt = () => {
             History
           </button>
         </div>
-
-        {activeTab === 'pending' && pendingBalances.length > 0 && (
-          <Button 
-            onClick={() => setShowReceiptForm(true)}
-            className="flex items-center gap-2"
-          >
-            <Plus className="h-4 w-4" />
-            Process Balance Receipt
-          </Button>
-        )}
       </div>
 
-      {/* Aggregated Balance Table */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden border-border shadow-md">
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-card border-b border-border">
+            <thead className="bg-muted/50 border-b border-border">
               <tr>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground w-8"></th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Product Name</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Variance Qty</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Received Qty</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Party Orders</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Production ID</th>
+                <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Name</th>
+                <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Party Name</th>
+                <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Produced Qty</th>
+                <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Status</th>
+                {activeTab === 'pending' && <th className="px-4 py-3 text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Action</th>}
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
-              {aggregatedBalances.map((aggregate) => {
-                const isExpanded = expandedProduct === aggregate.productKey;
-                
-                return (
-                  <>
-                    <tr 
-                      key={aggregate.productKey} 
-                      className="hover:bg-card/50 transition-colors cursor-pointer"
-                      onClick={() => setExpandedProduct(isExpanded ? null : aggregate.productKey)}
-                    >
-                      <td className="px-4 py-3 text-sm">
-                        {isExpanded ? (
-                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground font-medium">
-                        {`${aggregate.productName}${aggregate.packingSize ? ' ' + aggregate.packingSize : ''}`}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground font-semibold">
-                        {aggregate.totalVarianceQty}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-green-600 font-medium">
-                        {aggregate.totalReceivedQty || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground">
-                        {aggregate.partyDetails?.length || 0} {aggregate.partyDetails?.length === 1 ? 'order' : 'orders'}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <Badge className={getStatusColor(aggregate.status)}>{aggregate.status}</Badge>
-                      </td>
-                    </tr>
-                    
-                    {/* Expanded Party Details */}
-                    {isExpanded && (
-                      <tr>
-                        <td colSpan={6} className="px-4 py-2 bg-card/30">
-                          <div className="pl-8">
-                            {aggregate.partyDetails && aggregate.partyDetails.length > 0 ? (
-                              <>
-                                <h4 className="font-semibold text-sm mb-2 text-foreground">
-                                  Party Details: ({aggregate.partyDetails.length} {aggregate.partyDetails.length === 1 ? 'order' : 'orders'})
-                                </h4>
-                                <table className="w-full bg-background/50 rounded-lg overflow-hidden">
-                                  <thead className="bg-background">
-                                    <tr>
-                                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Order Ref</th>
-                                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Party Name</th>
-                                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Quantity</th>
-                                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Packing Type</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-border/50">
-                                    {aggregate.partyDetails.map((party, idx) => (
-                                      <tr key={idx} className="hover:bg-background/70 transition-colors">
-                                        <td className="px-3 py-2 text-sm text-foreground font-medium">{party.orderRef}</td>
-                                        <td className="px-3 py-2 text-sm text-foreground">{party.partyName}</td>
-                                        <td className="px-3 py-2 text-sm text-foreground">{party.quantity}</td>
-                                        <td className="px-3 py-2 text-sm text-foreground">{party.packingType}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </>
-                            ) : (
-                              <p className="text-sm text-muted-foreground">No party details available</p>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
-                );
-              })}
+            <tbody className="divide-y divide-border bg-background">
+              {loading ? (
+                <TableSkeleton cols={6} rows={5} />
+              ) : items.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No {activeTab} balance receipts found</td>
+                </tr>
+              ) : items.map((item) => (
+                <tr key={item.production_id} className="hover:bg-muted/30 transition-colors">
+                  <td className="px-4 py-3 text-sm font-mono font-bold text-primary">{item.production_id}</td>
+                  <td className="px-4 py-3 text-sm font-medium">
+                    {item.productName} {item.packingSize && <span className="text-muted-foreground">({item.packingSize})</span>}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-foreground">{item.partyName || '-'}</td>
+                  <td className="px-4 py-3 text-sm font-semibold">{formatNumber(item.actual_qty)}</td>
+                  <td className="px-4 py-3">
+                    <Badge className={getStatusColor(item.status || 'Pending')}>{item.status || 'Pending'}</Badge>
+                  </td>
+                  {activeTab === 'pending' && (
+                    <td className="px-4 py-3 text-right">
+                      <Button 
+                        size="sm" 
+                        onClick={() => {
+                          setSelectedEntry(item);
+                          setShowReceiptForm(true);
+                          // Pre-fill received quantities with variance/returned amounts
+                          const initialReceipts: Record<string, number> = {};
+                          item.varianceItems.forEach((v: any) => {
+                            initialReceipts[v.material] = (v.diff || 0) + (v.returned || 0);
+                          });
+                          setMaterialReceipts(initialReceipts);
+                        }}
+                      >
+                        Receive
+                      </Button>
+                    </td>
+                  )}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-        {aggregatedBalances.length === 0 && (
-          <div className="p-8 text-center text-muted-foreground">
-            No {activeTab === 'pending' ? 'pending' : 'history'} balance material receipts
-          </div>
-        )}
       </Card>
 
-      {/* Process Balance Receipt Form Modal */}
-      {showReceiptForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <h2 className="text-lg font-bold text-foreground mb-4">Process Balance Receipt</h2>
-              
-              {/* Product Selection */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-foreground mb-2">Select Product</label>
-                <select
-                  value={selectedProduct}
-                  onChange={(e) => setSelectedProduct(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
-                >
-                  <option value="">-- Select Product --</option>
-                  {uniqueProducts.map(product => (
-                    <option key={product.key} value={product.key}>{product.name}</option>
-                  ))}
-                </select>
+      {showReceiptForm && selectedEntry && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-background p-6 border-border shadow-xl">
+            <div className="flex justify-between items-center mb-6 border-b border-border pb-2">
+              <h2 className="text-xl font-bold text-foreground">Process Balance Material Receipt</h2>
+              <Button variant="ghost" size="icon" onClick={() => setShowReceiptForm(false)}><X className="h-5 w-5" /></Button>
+            </div>
+
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-muted/30 rounded-lg border border-border">
+                <div>
+                  <label className="text-xs text-muted-foreground block">Production ID</label>
+                  <span className="text-sm font-bold font-mono">{selectedEntry.production_id}</span>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block">Product</label>
+                  <span className="text-sm font-bold">{selectedEntry.productName}</span>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block">Party</label>
+                  <span className="text-sm font-medium">{selectedEntry.partyName || '-'}</span>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block">Produced Qty</label>
+                  <span className="text-sm font-bold">{formatNumber(selectedEntry.actual_qty)}</span>
+                </div>
               </div>
 
-              {/* Received Quantity Input */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Received Quantity <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  value={receiptQuantity}
-                  onChange={(e) => setReceiptQuantity(e.target.value)}
-                  placeholder="Enter received quantity"
-                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
+              <div>
+                <h3 className="text-sm font-bold mb-3 uppercase text-muted-foreground">Leftover Materials (Variance / Returned)</h3>
+                <div className="border border-border rounded-lg overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted text-xs font-bold text-muted-foreground uppercase border-b border-border">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Material</th>
+                        <th className="px-3 py-2 text-center">Variance</th>
+                        <th className="px-3 py-2 text-center">Returned</th>
+                        <th className="px-3 py-2 text-center">Damaged</th>
+                        <th className="px-3 py-2 text-right w-32">Qty Received</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {selectedEntry.varianceItems.map((item: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-muted/20 transition-colors">
+                          <td className="px-3 py-2 font-medium">{item.material}</td>
+                          <td className="px-3 py-2 text-center font-semibold text-orange-600">{item.diff || 0}</td>
+                          <td className="px-3 py-2 text-center font-bold text-green-600">{item.returned || 0}</td>
+                          <td className="px-3 py-2 text-center font-medium text-red-500">{item.damaged || 0}</td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              type="number"
+                              value={materialReceipts[item.material] || 0}
+                              onChange={(e) => setMaterialReceipts(prev => ({ ...prev, [item.material]: Number(e.target.value) }))}
+                              className="w-full px-2 py-1 text-right border border-border rounded bg-background font-bold text-primary"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">Remarks</label>
+                <textarea
+                  value={remarks}
+                  onChange={e => setRemarks(e.target.value)}
+                  placeholder="Notes about quality or quantity of balance materials..."
+                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground h-24"
                 />
               </div>
 
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowReceiptForm(false);
-                    setSelectedProduct('');
-                    setReceiptQuantity('');
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button 
-                  onClick={handleReceiptSubmit}
-                  className="bg-primary hover:bg-primary/90"
-                  disabled={!selectedProduct || !receiptQuantity}
-                >
-                  Receive Balance Materials
-                </Button>
+              <div className="flex justify-end gap-3 pt-4 border-t border-border">
+                <Button variant="outline" onClick={() => setShowReceiptForm(false)}>Cancel</Button>
+                <Button onClick={handleReceiptSubmit} className="bg-primary hover:bg-primary/90">Confirm Receipt</Button>
               </div>
             </div>
           </Card>

@@ -4,9 +4,13 @@ import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Fragment } from 'react';
 import StageHeader from '@/components/stage-header';
+import TableSkeleton from '@/components/table-skeleton';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { 
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
   getDispatchOrders,
   saveDispatchOrder,
   getProductStock,
@@ -19,22 +23,59 @@ const normalizeProductKey = (productName: string): string => {
   return productName.toUpperCase().replace(/\s+/g, ' ').trim();
 };
 
+// Start of Helper Functions
+const categorizeOilType = (productName: string): string => {
+  const upperName = productName.toUpperCase();
+  if (upperName.includes('RBO') || upperName.includes('RICE')) return 'Rice Bran Oil';
+  if (upperName.includes('SBO') || upperName.includes('SOYBEAN')) return 'Soybean Oil';
+  if (upperName.includes('PALM') || upperName.includes('PALMOLEIN')) return 'Palm Oil';
+  if (upperName.includes('MUSTARD') || upperName.includes('KACHI GHANI')) return 'Mustard Oil';
+  if (upperName.includes('SUN') || upperName.includes('SUNFLOWER')) return 'Sunflower Oil';
+  if (upperName.includes('COTTON')) return 'Cottonseed Oil';
+  if (upperName.includes('GROUNDNUT')) return 'Groundnut Oil';
+  return 'Other';
+};
+
+interface ExtendedDispatchOrder extends DispatchOrder {
+  packingWeight?: number;
+  totalWeightKg?: number;
+}
+
 interface AggregatedDispatch {
   productKey: string;
   productName: string;
   totalQuantity: number;
+  totalWeightKg: number;
   availableStock: number;
   shortage: number;
+  shortageKg: number;
   tankSize: string;
   totalLots: number;
   status: string;
-  orders: DispatchOrder[];
+  orders: ExtendedDispatchOrder[];
+  oilType: string;
 }
+
+interface OilTypeGroup {
+  oilType: string;
+  totalQuantity: number;
+  totalWeightKg: number;
+  products: AggregatedDispatch[];
+  isExpanded: boolean;
+  shortage: number;
+  shortageKg: number;
+}
+// End of Helper Functions
 
 const OrderDispatchPlanning = () => {
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
-  const [orders, setOrders] = useState<DispatchOrder[]>([]);
+  const [orders, setOrders] = useState<ExtendedDispatchOrder[]>([]); // All orders
+  const [loading, setLoading] = useState(true);
+  
+  // State for expanded/collapsed sections
+  const [expandedOilTypes, setExpandedOilTypes] = useState<string[]>([]);
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
+
   const [showDispatchForm, setShowDispatchForm] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<string>('');
   const [formData, setFormData] = useState({
@@ -45,49 +86,61 @@ const OrderDispatchPlanning = () => {
 
   useEffect(() => {
     initializeDefaultStocks();
-    const savedOrders = getDispatchOrders();
     
-    // Initialize with default data if empty
-    if (savedOrders.length === 0) {
-      const defaultOrders: DispatchOrder[] = [
-        {
-          id: '1',
-          productName: 'HK Rice',
-          totalQuantity: 15,
-          tankSize: '5 MT each',
-          totalLots: 3,
-          status: 'Planned',
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: '2',
-          productName: 'HK SOYA',
-          totalQuantity: 1000,
-          tankSize: '5 MT each',
-          totalLots: 200,
-          status: 'Planned',
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: '3',
-          productName: 'HK Soya',
-          totalQuantity: 1000,
-          tankSize: '5 MT each',
-          totalLots: 200,
-          status: 'Planned',
-          createdAt: new Date().toISOString(),
-        },
-      ];
-      
-      defaultOrders.forEach(order => saveDispatchOrder(order));
-      setOrders(defaultOrders);
-    } else {
-      setOrders(savedOrders);
-    }
+    // Fetch data from backend API
+    const fetchDispatchOrders = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/dispatch-planning/pending`);
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch dispatch orders');
+        }
+        
+        const result = await response.json();
+        
+        // Handle new API response format with data wrapper
+        const data = result.data || result;
+        
+        // Transform backend data to match component format
+        const transformedOrders: ExtendedDispatchOrder[] = data.map((item: any) => {
+          const qty = parseFloat(item.quantity || '0');
+          const packingWeight = parseFloat(item.packingWeight || '0');
+          
+          return {
+            id: item.id, // now maps to so_no from backend
+            productName: item.productName || 'Unknown Product',
+            totalQuantity: qty,
+            packingWeight: packingWeight,
+            totalWeightKg: qty * packingWeight,
+            tankSize: '5 MT each', // Default tank size
+            totalLots: Math.ceil(qty / 5),
+            status: 'Planned',
+            createdAt: item.planned3 || new Date().toISOString(),
+            orderNo: item.orderNo,
+            customerName: item.customerName || 'Unknown Party',
+            deliveryDate: item.deliveryDate,
+          };
+        });
+        
+        setOrders(transformedOrders);
+      } catch (error) {
+        console.error('Error fetching dispatch orders:', error);
+        // Fallback to localStorage if API fails
+        const savedOrders = getDispatchOrders();
+        if (savedOrders.length > 0) {
+          setOrders(savedOrders);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchDispatchOrders();
   }, []);
 
   // Aggregate orders by product
-  const aggregateOrders = (ordersList: DispatchOrder[]): AggregatedDispatch[] => {
+  const aggregateOrders = (ordersList: ExtendedDispatchOrder[]): AggregatedDispatch[] => {
     const aggregated: { [key: string]: AggregatedDispatch } = {};
 
     ordersList.forEach(order => {
@@ -99,26 +152,65 @@ const OrderDispatchPlanning = () => {
           productKey,
           productName: order.productName,
           totalQuantity: 0,
+          totalWeightKg: 0,
           availableStock: stock,
           shortage: 0,
-          tankSize: order.tankSize,
+          shortageKg: 0,
+          tankSize: order.tankSize || '5 MT each',
           totalLots: 0,
           status: order.status,
-          orders: []
+          orders: [],
+          oilType: categorizeOilType(order.productName),
         };
       }
 
-      aggregated[productKey].totalQuantity += order.totalQuantity;
-      aggregated[productKey].totalLots += order.totalLots;
+      aggregated[productKey].totalQuantity += order.totalQuantity || 0;
+      aggregated[productKey].totalWeightKg += order.totalWeightKg || 0;
+      aggregated[productKey].totalLots += order.totalLots || 0;
       aggregated[productKey].orders.push(order);
     });
 
     // Calculate shortage
     Object.values(aggregated).forEach(agg => {
       agg.shortage = Math.max(0, agg.totalQuantity - agg.availableStock);
+      // Assuming availableStock is in the same units as totalQuantity.
+      // If availableStock is 0 (Under Construction), shortageKg will be totalWeightKg.
+      // For now, let's calculate shortage proportionately if stock > 0.
+      if (agg.totalQuantity > 0) {
+        const ratio = agg.shortage / agg.totalQuantity;
+        agg.shortageKg = agg.totalWeightKg * ratio;
+      } else {
+        agg.shortageKg = 0;
+      }
     });
 
     return Object.values(aggregated);
+  };
+
+  const groupOrdersByOilType = (aggregatedList: AggregatedDispatch[]): OilTypeGroup[] => {
+    const groups: { [key: string]: OilTypeGroup } = {};
+
+    aggregatedList.forEach(agg => {
+      const type = agg.oilType;
+      if (!groups[type]) {
+        groups[type] = {
+          oilType: type,
+          totalQuantity: 0,
+          totalWeightKg: 0,
+          products: [],
+          isExpanded: false,
+          shortage: 0,
+          shortageKg: 0
+        };
+      }
+      groups[type].totalQuantity += agg.totalQuantity;
+      groups[type].totalWeightKg += agg.totalWeightKg;
+      groups[type].shortage += agg.shortage;
+      groups[type].shortageKg += agg.shortageKg;
+      groups[type].products.push(agg);
+    });
+
+    return Object.values(groups).sort((a, b) => b.totalQuantity - a.totalQuantity);
   };
 
   const getStatusColor = (status: string) => {
@@ -169,16 +261,29 @@ const OrderDispatchPlanning = () => {
     });
   };
 
+  // Toggle Oil Type Expansion
+  const toggleOilType = (type: string) => {
+    setExpandedOilTypes(prev => 
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    );
+  };
+
   const pendingOrders = orders.filter(o => o.status === 'Planned');
   const historyOrders = orders.filter(o => o.status !== 'Planned');
 
   const displayOrders = activeTab === 'pending' ? pendingOrders : historyOrders;
   const aggregatedOrders = aggregateOrders(displayOrders);
+  const groupedOrders = groupOrdersByOilType(aggregatedOrders);
 
   const uniqueProducts = aggregateOrders(pendingOrders).map(a => ({
     key: a.productKey,
     name: a.productName
   }));
+
+  // Helper to format number
+  const formatNumber = (num: number) => {
+    return num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  };
 
   return (
     <div className="p-6 bg-background">
@@ -211,112 +316,152 @@ const OrderDispatchPlanning = () => {
             History
           </button>
         </div>
-
-        {activeTab === 'pending' && pendingOrders.length > 0 && (
-          <Button 
-            onClick={() => setShowDispatchForm(true)}
-            className="flex items-center gap-2"
-          >
-            <Plus className="h-4 w-4" />
-            Process Dispatch
-          </Button>
-        )}
       </div>
 
-      {/* Aggregated Dispatch Table */}
+      {/* Grouped Dispatch Table */}
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-card border-b border-border">
               <tr>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground w-8"></th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Product Name</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Qty (MT)</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Available Stock</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Shortage</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Lots</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground w-10"></th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Product Name / Oil Type</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Qty (Kg)</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">
+                  Available Stock
+                  <span className="ml-2 text-xs font-normal text-muted-foreground italic">(Under Construction)</span>
+                </th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Shortage (Kg)</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
-              {aggregatedOrders.map((aggregate) => {
-                const isExpanded = expandedProduct === aggregate.productKey;
-                
-                return (
-                  <>
-                    <tr 
-                      key={aggregate.productKey} 
-                      className="hover:bg-card/50 transition-colors cursor-pointer"
-                      onClick={() => setExpandedProduct(isExpanded ? null : aggregate.productKey)}
-                    >
-                      <td className="px-4 py-3 text-sm">
-                        {isExpanded ? (
-                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground font-medium">
-                        {aggregate.productName}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground font-semibold">
-                        {aggregate.totalQuantity}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground">
-                        {aggregate.availableStock}
-                      </td>
-                      <td className={`px-4 py-3 text-sm font-semibold ${aggregate.shortage > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        {aggregate.shortage > 0 ? aggregate.shortage : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground">
-                        {aggregate.totalLots} lots of {aggregate.tankSize}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <Badge className={getStatusColor(aggregate.status)}>{aggregate.status}</Badge>
-                      </td>
-                    </tr>
-                    
-                    {/* Expanded Details */}
-                    {isExpanded && aggregate.orders.length > 0 && (
-                      <tr>
-                        <td colSpan={7} className="px-4 py-2 bg-card/30">
-                          <div className="pl-8">
-                            <h4 className="font-semibold text-sm mb-2 text-foreground">
-                              Dispatch Details: ({aggregate.orders.length} {aggregate.orders.length === 1 ? 'order' : 'orders'})
-                            </h4>
-                            <table className="w-full bg-background/50 rounded-lg overflow-hidden">
-                              <thead className="bg-background">
-                                <tr>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Order ID</th>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Product</th>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Quantity</th>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Tank Size</th>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Lots</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-border/50">
-                                {aggregate.orders.map((order, idx) => (
-                                  <tr key={idx} className="hover:bg-background/70 transition-colors">
-                                    <td className="px-3 py-2 text-sm text-foreground font-medium">{order.id}</td>
-                                    <td className="px-3 py-2 text-sm text-foreground">{order.productName}</td>
-                                    <td className="px-3 py-2 text-sm text-foreground">{order.totalQuantity} MT</td>
-                                    <td className="px-3 py-2 text-sm text-foreground">{order.tankSize}</td>
-                                    <td className="px-3 py-2 text-sm text-foreground">{order.totalLots}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
+            {loading ? (
+              <TableSkeleton cols={6} rows={5} />
+            ) : (
+              <tbody className="divide-y divide-border">
+                {groupedOrders.map((group) => {
+                  const isGroupExpanded = expandedOilTypes.includes(group.oilType);
+
+                  return (
+                    <Fragment key={group.oilType}>
+                      {/* Level 1: Oil Type Group Header */}
+                      <tr 
+                        className="bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer border-b border-border/50"
+                        onClick={() => toggleOilType(group.oilType)}
+                      >
+                        <td className="px-4 py-3 text-sm">
+                          {isGroupExpanded ? (
+                            <ChevronDown className="h-5 w-5 text-primary" />
+                          ) : (
+                            <ChevronRight className="h-5 w-5 text-primary" />
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-lg font-bold text-primary">
+                          {group.oilType} 
+                          <span className="text-sm font-medium text-muted-foreground ml-2">
+                             ({group.products.length} Products)
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-base text-foreground font-bold">
+                          {formatNumber(group.totalWeightKg)}
+                        </td>
+                        <td className="px-4 py-3 text-base text-foreground">
+                          -
+                        </td>
+                        <td className={`px-4 py-3 text-base font-bold ${group.shortageKg > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                           {group.shortageKg > 0 ? formatNumber(group.shortageKg) : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-base">
+                          <Badge variant="outline">{activeTab === 'pending' ? 'Pending' : 'History'}</Badge>
                         </td>
                       </tr>
-                    )}
-                  </>
-                );
-              })}
-            </tbody>
+
+                      {/* Level 2: Products within Oil Type */}
+                      {isGroupExpanded && group.products.map((aggregate) => {
+                        const isProductExpanded = expandedProduct === aggregate.productKey;
+                        
+                        return (
+                          <Fragment key={aggregate.productKey}>
+                            <tr 
+                              className="hover:bg-card/50 transition-colors cursor-pointer bg-card/10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedProduct(isProductExpanded ? null : aggregate.productKey);
+                              }}
+                            >
+                              <td className="px-4 py-3 text-sm pl-8"> {/* Indented arrow */}
+                                {isProductExpanded ? (
+                                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-foreground font-medium pl-8"> {/* Indented name */}
+                                {aggregate.productName}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-foreground font-semibold">
+                                {formatNumber(aggregate.totalWeightKg)}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-foreground">
+                                {aggregate.availableStock}
+                              </td>
+                              <td className={`px-4 py-3 text-sm font-semibold ${aggregate.shortageKg > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                {aggregate.shortageKg > 0 ? formatNumber(aggregate.shortageKg) : '-'}
+                              </td>
+                              <td className="px-4 py-3 text-sm">
+                                <Badge className={getStatusColor(aggregate.status)}>{aggregate.status}</Badge>
+                              </td>
+                            </tr>
+                            
+                            {/* Level 3: Individual Orders (Details) */}
+                            {isProductExpanded && aggregate.orders.length > 0 && (
+                              <tr key={`${aggregate.productKey}-details`}>
+                                <td colSpan={8} className="px-4 py-2 bg-card/30">
+                                  <div className="pl-16"> {/* More indentation for details */}
+                                    <h4 className="font-semibold text-sm mb-2 text-foreground">
+                                      Dispatch Details: ({aggregate.orders.length} {aggregate.orders.length === 1 ? 'order' : 'orders'})
+                                    </h4>
+                                    <table className="w-full bg-background/50 rounded-lg overflow-hidden border border-border/50">
+                                      <thead className="bg-background">
+                                        <tr>
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Timestamp</th>
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Order ID</th>
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Party Name</th>
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Product</th>
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Quantity</th>
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Total Weight (Kg)</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-border/50">
+                                        {aggregate.orders.map((order, idx) => (
+                                          <tr key={idx} className="hover:bg-background/70 transition-colors">
+                                            <td className="px-3 py-2 text-xs text-muted-foreground">
+                                              {order.createdAt ? new Date(order.createdAt).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                                            </td>
+                                            <td className="px-3 py-2 text-sm text-foreground font-medium">{order.id}</td>
+                                            <td className="px-3 py-2 text-sm text-foreground">{order.customerName || 'Unknown Party'}</td>
+                                            <td className="px-3 py-2 text-sm text-foreground">{order.productName}</td>
+                                            <td className="px-3 py-2 text-sm text-foreground">{order.totalQuantity || 0}</td>
+                                            <td className="px-3 py-2 text-sm text-foreground">{formatNumber(order.totalWeightKg || 0)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            )}
           </table>
         </div>
-        {aggregatedOrders.length === 0 && (
+        {!loading && groupedOrders.length === 0 && (
           <div className="p-8 text-center text-muted-foreground">
             No {activeTab === 'pending' ? 'pending' : 'history'} dispatch orders
           </div>

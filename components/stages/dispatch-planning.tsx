@@ -1,353 +1,723 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import StageHeader from '@/components/stage-header';
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
-import { 
-  getDispatchPlans, 
-  moveToOilReceipt, 
+import TableSkeleton from '@/components/table-skeleton';
+import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
+import {
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
   getProductStock,
   initializeDefaultStocks,
-  type DispatchPlanItem 
 } from '@/lib/workflow-storage';
 
-// Normalize product key
+const PALM_ADDITIVES = [
+  { item: 'TBHQ', weight: '150 GM PER MT', vendor: 'HEERA & SONS', costExGst: '700/KG', costPerMt: 105, stdWtGm: 150, ratePerKg: 700 },
+  { item: 'ANTIFOAMING', weight: '5 GM PER MT', vendor: 'ANGEL CHEMICAL', costExGst: '5300/KG', costPerMt: 26.5, stdWtGm: 5, ratePerKg: 5300 },
+];
+
+const RICE_ADDITIVES = [
+  { item: 'TBHQ', weight: '150GM PER MT', vendor: 'HEERA & SONS', costExGst: '700/KG', costPerMt: 126, stdWtGm: 150, ratePerKg: 840 },
+  { item: 'ANTIFOAMING', weight: '5 GM PER MT', vendor: 'ANGEL CHEMICAL', costExGst: '5300/KG', costPerMt: 26.5, stdWtGm: 5, ratePerKg: 5300 },
+];
+
+const SOYA_ADDITIVES = [
+  { item: 'TBHQ', weight: '150 GM PER MT', vendor: 'HEERA & SONS', costExGst: '700/KG', costPerMt: 105, stdWtGm: 150, ratePerKg: 700 },
+  { item: 'ANTIFOAMING', weight: '5 GM PER MT', vendor: 'ANGEL CHEMICAL', costExGst: '5300/KG', costPerMt: 26.5, stdWtGm: 5, ratePerKg: 5300 },
+];
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const formatNumber = (num: number | undefined) => {
+  if (num === undefined || num === null) return '-';
+  return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(num);
+};
+
 const normalizeProductKey = (productName: string, packingSize?: string): string => {
-  const normalized = `${productName}${packingSize ? ' ' + packingSize : ''}`
+  if (!productName) return 'UNKNOWN';
+  return `${productName}${packingSize ? ' ' + packingSize : ''}`
     .toUpperCase()
     .replace(/\s+/g, ' ')
     .trim();
-  return normalized;
 };
 
-interface AggregatedPlan {
+const categorizeOilType = (productName: string): string => {
+  if (!productName) return 'Other Oils';
+  const n = productName.toLowerCase();
+  if (n.includes('rice bran oil') || n.includes('rbo') || n.includes('rice bran') || n.includes('rice')) return 'Rice Bran Oil';
+  if (n.includes('soybean') || n.includes('soya') || n.includes('sbo')) return 'Soybean Oil';
+  if (n.includes('palm') || n.includes('palmolein')) return 'Palm Oil';
+  if (n.includes('mustard') || n.includes('kachi ghani')) return 'Mustard Oil';
+  if (n.includes('sunflower')) return 'Sunflower Oil';
+  if (n.includes('groundnut')) return 'Groundnut Oil';
+  return 'Other Oils';
+};
+
+const getStatusColor = (status: string) => {
+  switch (status?.toLowerCase()) {
+    case 'planned':   return 'bg-blue-100 text-blue-800';
+    case 'dispatched':return 'bg-green-100 text-green-800';
+    case 'pending':   return 'bg-yellow-100 text-yellow-800';
+    default:          return 'bg-gray-100 text-gray-800';
+  }
+};
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface DispatchItem {
+  id: string;
+  productName: string;
+  packingSize?: string;
+  packingType: string;
+  partyName?: string;
+  indentQuantity: number;
+  totalWeightKg: number;
+  tankNo?: string;
+  status: string;
+  remarks?: string;
+  plannedDate?: string;
+  createdAt?: string;
+  additives?: any[];
+  givenFromTankNo?: string;
+  approvedQty?: number;
+  approvalDate?: string;
+}
+
+interface ProductGroup {
   productKey: string;
   productName: string;
   packingSize?: string;
+  packingType: string;
   totalQuantity: number;
+  totalWeightKg: number;
   availableStock: number;
   shortage: number;
-  totalLots: number;
   status: string;
-  plans: DispatchPlanItem[];
+  tankNo?: string;
+  items: DispatchItem[];
 }
+
+interface OilTypeGroup {
+  type: string;
+  totalQuantity: number;
+  totalWeightKg: number;
+  products: ProductGroup[];
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 const DispatchPlanning = () => {
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
-  const [plans, setPlans] = useState<DispatchPlanItem[]>([]);
-  const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
-  const [showDispatchForm, setShowDispatchForm] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [items, setItems] = useState<DispatchItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Expand/collapse state
+  const [expandedOilTypes, setExpandedOilTypes] = useState<Record<string, boolean>>({});
+  const [expandedProducts, setExpandedProducts] = useState<Record<string, boolean>>({});
+
+  // Form state
   const [selectedProduct, setSelectedProduct] = useState<string>('');
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [formDetailsExpanded, setFormDetailsExpanded] = useState(false);
+  const [remarks, setRemarks] = useState('');
+  const [actualQtyKg, setActualQtyKg] = useState('');
+  const [additivesData, setAdditivesData] = useState<any[]>([]);
 
   useEffect(() => {
     initializeDefaultStocks();
-    const savedPlans = getDispatchPlans();
-    const validPlans = savedPlans.filter((p) => p && p.lots && Array.isArray(p.lots));
-    setPlans(validPlans);
-  }, []);
+    fetchData();
+  }, [activeTab]);
 
-  // Aggregate plans by product
-  const aggregatePlans = (plansList: DispatchPlanItem[]): AggregatedPlan[] => {
-    const aggregated: { [key: string]: AggregatedPlan } = {};
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const endpoint =
+        activeTab === 'pending'
+          ? `${API_BASE_URL}/dispatch-planning-plant/pending`
+          : `${API_BASE_URL}/dispatch-planning-plant/history`;
 
-    plansList.forEach(plan => {
-      const productKey = normalizeProductKey(plan.productName, plan.packingSize);
-      
-      if (!aggregated[productKey]) {
-        const stock = getProductStock(productKey);
-        aggregated[productKey] = {
-          productKey,
-          productName: plan.productName,
-          packingSize: plan.packingSize,
-          totalQuantity: 0,
-          availableStock: stock,
-          shortage: 0,
-          totalLots: 0,
-          status: plan.status,
-          plans: []
-        };
+      const response = await fetch(endpoint);
+      const result = await response.json();
+
+      if (result.status === 'success') {
+        const mapped: DispatchItem[] = result.data.map((item: any) => {
+          if (activeTab === 'history' && item.indentDetails) {
+            return {
+              id: item.production_id,
+              indentQuantity: parseFloat(item.indentDetails.indent_quantity),
+              totalWeightKg: parseFloat(item.indentDetails.total_weight_kg || 0),
+              productName: item.indentDetails.product_name,
+              packingSize: item.indentDetails.packing_size,
+              packingType: item.indentDetails.packing_type,
+              partyName: item.indentDetails.party_name,
+              tankNo: item.indentDetails.tank_no,
+              status: item.status,
+              remarks: item.remarks,
+              plannedDate: item.planned_date,
+              createdAt: item.created_at,
+              additives: item.additives,
+              givenFromTankNo: item.indentDetails.given_from_tank_no,
+              approvedQty: parseFloat(item.indentDetails.approved_qty || 0),
+              approvalDate: item.indentDetails.approval_date,
+            };
+          }
+          return {
+            id: item.production_id,
+            indentQuantity: parseFloat(item.indent_quantity),
+            totalWeightKg: parseFloat(item.total_weight_kg || 0),
+            productName: item.product_name,
+            packingSize: item.packing_size,
+            packingType: item.packing_type,
+            partyName: item.party_name,
+            tankNo: item.tank_no,
+            status: 'Pending',
+            createdAt: item.created_at,
+            givenFromTankNo: item.given_from_tank_no,
+            approvedQty: parseFloat(item.approved_qty || 0),
+            approvalDate: item.approval_date,
+          };
+        });
+        setItems(mapped);
       }
-
-      aggregated[productKey].totalQuantity += plan.totalQty;
-      aggregated[productKey].totalLots += (plan.lots?.length || 0);
-      aggregated[productKey].plans.push(plan);
-    });
-
-    // Calculate shortage
-    Object.values(aggregated).forEach(agg => {
-      agg.shortage = Math.max(0, agg.totalQuantity - agg.availableStock);
-    });
-
-    return Object.values(aggregated);
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'planned':
-        return 'bg-blue-100 text-blue-800';
-      case 'processed':
-        return 'bg-purple-100 text-purple-800';
-      case 'received':
-        return 'bg-green-100 text-green-800';
-      default:
-        return 'bg-yellow-100 text-yellow-800';
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleDispatch = () => {
-    if (!selectedProduct) {
-      alert('Please select a product');
+  // ── Grouping ──────────────────────────────────────────────────────────────
+
+  const groupByOilType = (list: DispatchItem[]): OilTypeGroup[] => {
+    const oilGroups: Record<string, OilTypeGroup> = {};
+
+    list.forEach(item => {
+      const oilType = categorizeOilType(item.productName);
+      const productKey = normalizeProductKey(item.productName, item.packingSize);
+
+      if (!oilGroups[oilType]) {
+        oilGroups[oilType] = { type: oilType, totalQuantity: 0, totalWeightKg: 0, products: [] };
+      }
+
+      let productGroup = oilGroups[oilType].products.find(p => p.productKey === productKey);
+      if (!productGroup) {
+        const stock = getProductStock(productKey);
+        productGroup = {
+          productKey,
+          productName: item.productName,
+          packingSize: item.packingSize,
+          packingType: item.packingType || '-',
+          totalQuantity: 0,
+          totalWeightKg: 0,
+          availableStock: stock,
+          shortage: 0,
+          status: item.status,
+          tankNo: item.tankNo,
+          items: [],
+        };
+        oilGroups[oilType].products.push(productGroup);
+      }
+
+      productGroup.totalQuantity += item.indentQuantity;
+      productGroup.totalWeightKg += item.totalWeightKg;
+      productGroup.items.push(item);
+      oilGroups[oilType].totalQuantity += item.indentQuantity;
+      oilGroups[oilType].totalWeightKg += item.totalWeightKg;
+
+      // Ensure tankNo is captured if not already set
+      if (!productGroup.tankNo && item.tankNo) {
+        productGroup.tankNo = item.tankNo;
+      }
+    });
+
+    Object.values(oilGroups).forEach(og =>
+      og.products.forEach(pg => {
+        pg.shortage = Math.max(0, pg.totalQuantity - pg.availableStock);
+      })
+    );
+
+    return Object.values(oilGroups);
+  };
+
+  const toggleOilType = (type: string) =>
+    setExpandedOilTypes(prev => ({ ...prev, [type]: !prev[type] }));
+
+  const toggleProduct = (key: string) =>
+    setExpandedProducts(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // ── Form helpers ──────────────────────────────────────────────────────────
+
+  const handleOilTypeSelect = (oilType: string) => {
+    setSelectedProduct(oilType);
+    const group = groupByOilType(items).find(g => g.type === oilType);
+    if (group) {
+      const allItems = group.products.flatMap(p => p.items);
+      setSelectedItems(allItems.map(i => i.id));
+    }
+  };
+
+  const handleItemToggle = (itemId: string) => {
+    const newSelected = selectedItems.includes(itemId)
+      ? selectedItems.filter(id => id !== itemId)
+      : [...selectedItems, itemId];
+    setSelectedItems(newSelected);
+  };
+
+  // Auto-calculate Actual Qty (MT) and Chemicals when selection changes
+  useEffect(() => {
+    if (!showForm || !selectedProduct) return;
+
+    const group = oilTypeGroups.find(g => g.type === selectedProduct);
+    if (!group) return;
+
+    const totalKg = group.products.reduce((acc, p) => 
+      acc + p.items.filter(i => selectedItems.includes(i.id)).reduce((sum, item) => sum + item.totalWeightKg, 0), 0
+    );
+    setActualQtyKg(totalKg.toFixed(0));
+
+    // Seed additives base
+    let baseAdditives: any[] = [];
+    if (selectedProduct === 'Soybean Oil') {
+      baseAdditives = [...SOYA_ADDITIVES];
+    } else if (selectedProduct === 'Rice Bran Oil') {
+      baseAdditives = [...RICE_ADDITIVES];
+    } else if (selectedProduct === 'Palm Oil') {
+      baseAdditives = [...PALM_ADDITIVES];
+    }
+    
+    // Auto-calculate actual weight matching to totalKg
+    const mt = totalKg / 1000;
+    const initialAdditives = baseAdditives.map(p => ({ 
+      ...p, 
+      actualWeight: (mt * p.stdWtGm).toFixed(1) 
+    }));
+    
+    setAdditivesData(initialAdditives);
+  }, [selectedItems, selectedProduct, showForm]);
+
+  // Handle actual quantity change for auto-calculation
+  useEffect(() => {
+    if (!showForm || !selectedProduct) return;
+    
+    const mt = (Number(actualQtyKg) || 0) / 1000;
+    
+    setAdditivesData(prev => prev.map(p => ({
+      ...p,
+      actualWeight: (mt * p.stdWtGm).toFixed(1)
+    })));
+  }, [actualQtyKg]);
+
+  const resetForm = () => {
+    setShowForm(false);
+    setSelectedProduct('');
+    setSelectedItems([]);
+    setRemarks('');
+    setActualQtyKg('');
+    setAdditivesData([]);
+  };
+
+  const handleSubmit = async () => {
+    if (!selectedProduct || selectedItems.length === 0) {
+      alert('Please select an oil type and at least one item');
       return;
     }
 
-    // Get all plans for the selected product
-    const selectedPlans = plans.filter(plan => 
-      normalizeProductKey(plan.productName, plan.packingSize) === selectedProduct
-    );
+    try {
+      for (const productionId of selectedItems) {
+        const item = items.find(i => i.id === productionId);
+        if (!item) continue;
 
-    // Move each plan to Oil Receipt
-    selectedPlans.forEach(plan => {
-      moveToOilReceipt(plan);
-    });
+        const body = {
+          productionId,
+          remarks,
+          additives: additivesData,
+          actualQtyKg: actualQtyKg || null,
+        };
 
-    // Update local state to remove processed items
-    const remainingPlans = plans.filter(plan => 
-      normalizeProductKey(plan.productName, plan.packingSize) !== selectedProduct
-    );
-    setPlans(remainingPlans);
+        const res = await fetch(`${API_BASE_URL}/dispatch-planning-plant`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error('Failed to submit dispatch plan');
+      }
 
-    // Reset form
-    setShowDispatchForm(false);
-    setSelectedProduct('');
+      alert('Dispatch plan submitted successfully');
+      resetForm();
+      fetchData();
+    } catch (error) {
+      console.error('Submit error:', error);
+      alert('Failed to submit dispatch plan');
+    }
   };
 
-  const pendingPlans = plans.filter((p) => p.status === 'Planned');
-  const historyPlans = plans.filter((p) => p.status !== 'Planned');
-  const displayPlans = activeTab === 'pending' ? pendingPlans : historyPlans;
-  const aggregatedPlans = aggregatePlans(displayPlans);
+  // ── Derived data ──────────────────────────────────────────────────────────
 
-  const uniqueProducts = aggregatePlans(pendingPlans).map(a => ({
-    key: a.productKey,
-    name: `${a.productName}${a.packingSize ? ' ' + a.packingSize : ''}`
-  }));
+  const oilTypeGroups = groupByOilType(items);
+  const uniqueOilTypes = oilTypeGroups.map(g => g.type);
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="p-6 bg-background">
       <StageHeader
-        title="Dispatch Planning (Plant Person)"
+        title="Actual Dispatch"
         description="Plan additives and distribute oil to packing section by tank size (5 MT each lot)"
       />
 
-      {/* Tabs and Action Button */}
+      {/* Tabs + Action Button */}
       <div className="flex justify-between items-center mb-6">
         <div className="flex gap-2">
-          <button
-            onClick={() => setActiveTab('pending')}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'pending'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-card text-card-foreground border border-border'
-            }`}
-          >
-            Pending
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'history'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-card text-card-foreground border border-border'
-            }`}
-          >
-            History
-          </button>
+          {(['pending', 'history'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors capitalize ${
+                activeTab === tab
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-card text-card-foreground border border-border'
+              }`}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
         </div>
 
-        {activeTab === 'pending' && pendingPlans.length > 0 && (
-          <Button 
-            onClick={() => setShowDispatchForm(true)}
-            className="flex items-center gap-2"
-          >
-            <Plus className="h-4 w-4" />
-            Process Dispatch
-          </Button>
-        )}
       </div>
 
-      {/* Aggregated Dispatch Table */}
+      {/* Main Table */}
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-card border-b border-border">
               <tr>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground w-8"></th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Product Name</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Qty (MT)</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground w-8" />
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Product Name / Oil Type</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Qty (Kg)</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Available Stock</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Shortage</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Lots</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Status</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Approval Qty</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Given Tank No.</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Tank No.</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Packing Type</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Lab Status</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
-              {aggregatedPlans.map((aggregate) => {
-                const isExpanded = expandedProduct === aggregate.productKey;
-                
+            {loading ? (
+              <TableSkeleton cols={10} rows={5} />
+            ) : (
+              <tbody className="divide-y divide-border">
+                {oilTypeGroups.map((group, gi) => {
                 return (
-                  <>
-                    <tr 
-                      key={aggregate.productKey} 
-                      className="hover:bg-card/50 transition-colors cursor-pointer"
-                      onClick={() => setExpandedProduct(isExpanded ? null : aggregate.productKey)}
+                  <Fragment key={gi}>
+                    <tr
+                      className="bg-card/50 hover:bg-card transition-colors"
                     >
+                      <td className="px-4 py-3 text-sm" />
+                      <td className="px-4 py-3 text-base font-bold text-primary">
+                        {group.type}
+                        <span className="text-sm font-normal text-muted-foreground ml-2">
+                          ({group.products.length} Products)
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-base font-bold text-foreground">
+                        {formatNumber(group.totalWeightKg)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground">
+                        {Array.from(new Set(group.products.map(p => p.availableStock).filter(Boolean))).join(', ') || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-base font-bold text-foreground">
+                        {formatNumber(group.products.reduce((acc, p) => acc + p.items.reduce((sum, item) => sum + (item.approvedQty || 0), 0), 0))}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-foreground">
+                        {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.givenFromTankNo)).filter(v => v && v !== '-'))).join(', ') || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-foreground">
+                        {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.tankNo)).filter(v => v && v !== '-'))).join(', ') || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-foreground">
+                        {Array.from(new Set(group.products.map(p => p.packingType && p.packingType !== '-' ? p.packingType : p.items.find(i => i.packingType)?.packingType).filter(v => v && v !== '-'))).join(', ') || '-'}
+                      </td>
                       <td className="px-4 py-3 text-sm">
-                        {isExpanded ? (
-                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        {(() => {
+                          const statuses = Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.status)).filter(Boolean)));
+                          if (statuses.length === 0) {
+                            return (
+                              <Badge className={getStatusColor('Approved')}>Approved</Badge>
+                            );
+                          }
+                          return statuses.map((status, idx) => (
+                            <Badge key={idx} className={`${getStatusColor(status)} mr-1`}>{status === 'Confirmed' ? 'Approved' : status}</Badge>
+                          ));
+                        })()}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {activeTab === 'pending' && (
+                          <Button 
+                            size="sm" 
+                            className="h-8 py-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOilTypeSelect(group.type);
+                              setShowForm(true);
+                            }}
+                          >
+                            Process
+                          </Button>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-sm text-foreground font-medium">
-                        {`${aggregate.productName}${aggregate.packingSize ? ' ' + aggregate.packingSize : ''}`}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground font-semibold">
-                        {aggregate.totalQuantity}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground">
-                        {aggregate.availableStock}
-                      </td>
-                      <td className={`px-4 py-3 text-sm font-semibold ${aggregate.shortage > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        {aggregate.shortage > 0 ? aggregate.shortage : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground">
-                        {aggregate.totalLots} lots of 5 MT each
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <Badge className={getStatusColor(aggregate.status)}>{aggregate.status}</Badge>
-                      </td>
                     </tr>
-                    
-                    {/* Expanded Party Details */}
-                    {isExpanded && aggregate.plans.length > 0 && (
-                      <tr>
-                        <td colSpan={7} className="px-4 py-2 bg-card/30">
-                          <div className="pl-8">
-                            <h4 className="font-semibold text-sm mb-2 text-foreground">
-                              Order Details: ({aggregate.plans.length} {aggregate.plans.length === 1 ? 'order' : 'orders'})
-                            </h4>
-                            <table className="w-full bg-background/50 rounded-lg overflow-hidden">
-                              <thead className="bg-background">
-                                <tr>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Order Ref</th>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Party Name</th>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Quantity</th>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Packing Type</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-border/50">
-                                {aggregate.plans.map((plan: any, idx) => (
-                                  <tr key={idx} className="hover:bg-background/70 transition-colors">
-                                    <td className="px-3 py-2 text-sm text-foreground font-medium">{plan.orderRef || plan.id}</td>
-                                    <td className="px-3 py-2 text-sm text-foreground">{plan.partyName || '-'}</td>
-                                    <td className="px-3 py-2 text-sm text-foreground">{plan.totalQty}</td>
-                                    <td className="px-3 py-2 text-sm text-foreground">{plan.packingType || '-'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                  </Fragment>
                 );
               })}
+
+              {oilTypeGroups.length === 0 && (
+                <tr>
+                  <td colSpan={10} className="p-8 text-center text-muted-foreground">
+                    No {activeTab === 'pending' ? 'pending' : 'history'} dispatch plans
+                  </td>
+                </tr>
+              )}
             </tbody>
+            )}
           </table>
         </div>
-        {aggregatedPlans.length === 0 && (
-          <div className="p-8 text-center text-muted-foreground">
-            No {activeTab === 'pending' ? 'pending' : 'history'} dispatch plans
-          </div>
-        )}
       </Card>
 
-      {/* Dispatch Processing Form Modal */}
-      {showDispatchForm && (
+      {/* Dispatch Form Modal */}
+      {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+          <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <div className="p-6">
-              <h2 className="text-lg font-bold text-foreground mb-4">Process Dispatch to Packing</h2>
-              
-              {/* Product Selection */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-foreground mb-2">Select Product</label>
-                <select
-                  value={selectedProduct}
-                  onChange={(e) => setSelectedProduct(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground">
-                  <option value="">-- Select Product --</option>
-                  {uniqueProducts.map(product => (
-                    <option key={product.key} value={product.key}>{product.name}</option>
-                  ))}
-                </select>
+              <h2 className="text-lg font-bold text-foreground mb-4">Actual Dispatch</h2>
+
+              {/* Context Header */}
+              <div className="bg-muted/30 p-4 rounded-lg border border-border mb-6">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-lg font-bold text-primary">{selectedProduct}</h3>
+                    <p className="text-xs text-muted-foreground">Plan additives and distribute oil to packing section.</p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setFormDetailsExpanded(!formDetailsExpanded)}
+                    className="p-1 h-auto"
+                  >
+                    {formDetailsExpanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
+                  </Button>
+                </div>
               </div>
 
-              {selectedProduct && (
-                <>
-                  {/* Stock Summary */}
-                  <div className="grid grid-cols-3 gap-4 mb-6 p-3 bg-card rounded-lg border border-border">
-                    <div>
-                      <span className="text-xs text-muted-foreground">Available Stock:</span>
-                      <p className="font-semibold text-foreground">
-                        {aggregatePlans(pendingPlans).find(p => p.productKey === selectedProduct)?.availableStock || 0}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-xs text-muted-foreground">Total Quantity:</span>
-                      <p className="font-semibold text-foreground">
-                        {aggregatePlans(pendingPlans).find(p => p.productKey === selectedProduct)?.totalQuantity || 0} MT
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-xs text-muted-foreground">Shortage:</span>
-                      <p className={`font-semibold ${(aggregatePlans(pendingPlans).find(p => p.productKey === selectedProduct)?.shortage || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        {(aggregatePlans(pendingPlans).find(p => p.productKey === selectedProduct)?.shortage || 0) > 0 
-                          ? aggregatePlans(pendingPlans).find(p => p.productKey === selectedProduct)?.shortage
-                          : '-'
-                        }
-                      </p>
-                    </div>
-                  </div>
+              {selectedProduct && (() => {
+                const group = oilTypeGroups.find(g => g.type === selectedProduct);
+                if (!group) return null;
 
-                  {/* Lots Summary */}
-                  <div className="mb-6">
-                    <p className="text-sm text-foreground">
-                      <span className="font-medium">Total Lots:</span> {aggregatePlans(pendingPlans).find(p => p.productKey === selectedProduct)?.totalLots || 0} lots of 5 MT each
-                    </p>
-                  </div>
-                </>
-              )}
+                return (
+                  <>
+                    {/* Item to be packed section - Always Visible */}
+                    <div className="mb-6 p-4 bg-muted/30 rounded-lg border border-border">
+                        <p className="text-xs font-semibold mb-1 text-muted-foreground uppercase tracking-wider">Item(s) to be packed</p>
+                        <div className="text-lg font-bold text-primary">
+                            {Array.from(new Set(group.products.flatMap(p => {
+                              const parts = p.productName.split(' ');
+                              return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
+                            }))).join(', ')}
+                        </div>
+                    </div>
+
+                    {/* Order Details — grouped by product, collapsible */}
+                    <div className="mb-6">
+                      <div className="flex justify-between items-center mb-2">
+                        <h3 className="text-sm font-bold text-foreground">Order Details</h3>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setFormDetailsExpanded(!formDetailsExpanded)}
+                          className="h-8 py-0 underline text-primary"
+                        >
+                          {formDetailsExpanded ? 'Hide Details' : 'Show Details'}
+                        </Button>
+                      </div>
+                      
+                      {formDetailsExpanded && (
+                        <div className="space-y-3">
+                          {group.products.map((prod, pi) => (
+                            <div key={pi} className="border border-border rounded-lg overflow-hidden">
+                              {/* Product sub-header */}
+                              <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
+                                <span className="text-sm font-semibold text-foreground">
+                                  {prod.productName}{prod.packingSize ? ' ' + prod.packingSize : ''}
+                                </span>
+                                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                                  <span>Stock: {prod.availableStock}</span>
+                                  {prod.shortage > 0 && (
+                                    <span className="text-red-600 font-semibold">Shortage: {formatNumber(prod.shortage)}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <table className="w-full text-sm">
+                                <thead className="bg-muted/20 border-b border-border">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Timestamp</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Select</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Production ID</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Indent Qty (Kg)</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Tank No.</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border bg-background">
+                                  {prod.items.map((item: DispatchItem, idx: number) => (
+                                    <tr key={idx} className="hover:bg-muted/30">
+                                      <td className="px-3 py-2 text-xs text-muted-foreground">
+                                        {(() => {
+                                          const d = item.createdAt || item.plannedDate;
+                                          return d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
+                                        })()}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedItems.includes(item.id)}
+                                          onChange={() => handleItemToggle(item.id)}
+                                          className="w-4 h-4 rounded border-primary text-primary"
+                                        />
+                                      </td>
+                                      <td className="px-3 py-2 font-mono text-xs">{item.id}</td>
+                                      <td className="px-3 py-2 font-semibold text-primary">{formatNumber(item.totalWeightKg)}</td>
+                                      <td className="px-3 py-2">{item.tankNo || '-'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Tank Details Summary */}
+                    <div className="mb-6 grid grid-cols-2 gap-4">
+                      <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                        <span className="text-xs text-blue-600 uppercase font-semibold">Receive Tank No:</span>
+                        <p className="font-bold text-foreground">
+                          {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.tankNo)).filter(Boolean))).join(', ') || 'N/A'}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-green-50 border border-green-100 rounded-lg">
+                        <span className="text-xs text-green-600 uppercase font-semibold">Give Tank No:</span>
+                        <p className="font-bold text-foreground">
+                          {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.givenFromTankNo)).filter(Boolean))).join(', ') || 'N/A'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Quantity Tracking */}
+                    <div className="mb-6 grid grid-cols-2 gap-4">
+                      <div className="p-4 bg-muted/20 border border-border rounded-lg">
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Qty to be Dispatched (Kg)</label>
+                        <p className="text-xl font-bold text-primary">
+                          {formatNumber(group.products.reduce((acc, p) => acc + p.items.filter(i => selectedItems.includes(i.id)).reduce((sum, item) => sum + item.totalWeightKg, 0), 0))}
+                        </p>
+                      </div>
+                      <div className="p-4 bg-muted/20 border border-border rounded-lg">
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Actual Qty to be Dispatched (Kg)</label>
+                        <input
+                          type="number"
+                          value={actualQtyKg}
+                          onChange={(e) => {
+                            setActualQtyKg(e.target.value);
+                          }}
+                          placeholder="Enter actual Kg"
+                          className="w-full bg-background border-border border rounded px-3 py-1 font-bold text-lg"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Chemical Additives Section */}
+                    {(selectedProduct === 'Rice Bran Oil' || selectedProduct === 'Soybean Oil' || selectedProduct === 'Palm Oil') && (
+                      <div className="mb-6">
+                        <h3 className="text-sm font-bold text-foreground mb-3 flex items-center gap-2">
+                          <Plus className="h-4 w-4 text-primary" />
+                          Chemical Additives Planning
+                        </h3>
+                        <div className="border border-border rounded-lg overflow-hidden">
+                          <table className="w-full text-sm">
+                            <thead className="bg-muted/30">
+                              <tr>
+                                <th className="px-4 py-2 text-left">ITEM</th>
+                                <th className="px-4 py-2 text-left">STANDARD WEIGHT</th>
+                                <th className="px-4 py-2 text-left">ACTUAL WEIGHT</th>
+                                <th className="px-4 py-2 text-left">VENDOR</th>
+                                <th className="px-4 py-2 text-left">COST (EX-GST)</th>
+                                <th className="px-4 py-2 text-left">COST PER MT</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border bg-background">
+                              {additivesData.map((add, idx) => {
+                                const costCalc = ((Number(add.actualWeight) || 0) / 1000) * (add.ratePerKg || 0);
+                                return (
+                                  <tr key={idx}>
+                                    <td className="px-4 py-3 font-semibold text-foreground text-xs">{add.item}</td>
+                                    <td className="px-4 py-3 text-muted-foreground text-xs">{add.weight}</td>
+                                    <td className="px-4 py-3">
+                                      <input
+                                        type="number"
+                                        value={add.actualWeight || ''}
+                                        onChange={(e) => {
+                                          const newData = [...additivesData];
+                                          newData[idx].actualWeight = e.target.value;
+                                          setAdditivesData(newData);
+                                        }}
+                                        placeholder="gm"
+                                        className="w-full bg-muted/20 border-border border rounded px-2 py-1 text-xs"
+                                      />
+                                    </td>
+                                    <td className="px-4 py-3 text-muted-foreground text-xs">{add.vendor}</td>
+                                    <td className="px-4 py-3 text-muted-foreground text-xs">{add.costExGst}</td>
+                                    <td className="px-4 py-3 font-bold text-foreground text-right">{costCalc.toFixed(2)}</td>
+                                  </tr>
+                                );
+                              })}
+                              <tr>
+                                <td colSpan={5} className="px-4 py-3 font-bold text-right text-xs">TOTAL COST</td>
+                                <td className="px-4 py-3 font-bold text-primary text-right">
+                                  {additivesData.reduce((sum, item) => sum + (((Number(item.actualWeight) || 0) / 1000) * (item.ratePerKg || 0)), 0).toFixed(2)}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+
+                    {/* Remarks */}
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium text-foreground mb-2">Remarks</label>
+                      <textarea
+                        value={remarks}
+                        onChange={e => setRemarks(e.target.value)}
+                        placeholder="Add any remarks or notes"
+                        className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground h-20"
+                      />
+                    </div>
+                  </>
+                );
+              })()}
 
               <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={resetForm}>Cancel</Button>
                 <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowDispatchForm(false);
-                    setSelectedProduct('');
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button 
-                  onClick={handleDispatch}
+                  onClick={handleSubmit}
                   className="bg-primary hover:bg-primary/90"
-                  disabled={!selectedProduct}
+                  disabled={!selectedProduct || selectedItems.length === 0}
                 >
-                  Dispatch to Packing
+                  Submit Dispatch Plan
                 </Button>
               </div>
             </div>

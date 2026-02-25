@@ -1,143 +1,268 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import StageHeader from '@/components/stage-header';
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
-import { 
-  getOilReceipts,
-  moveToRawMaterialIndent,
-  getProductStock,
-  initializeDefaultStocks,
-  type OilReceiptItem 
-} from '@/lib/workflow-storage';
+import TableSkeleton from '@/components/table-skeleton';
+import { ChevronDown, ChevronRight, Plus, Loader2 } from 'lucide-react';
 
-// Normalize product key
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || `${API_BASE_URL}`;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const formatNumber = (num: number | undefined) => {
+  if (num === undefined || num === null) return '-';
+  return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(num);
+};
+
 const normalizeProductKey = (productName: string, packingSize?: string): string => {
-  const normalized = `${productName}${packingSize ? ' ' + packingSize : ''}`
+  if (!productName) return 'UNKNOWN';
+  return `${productName}${packingSize ? ' ' + packingSize : ''}`
     .toUpperCase()
     .replace(/\s+/g, ' ')
     .trim();
-  return normalized;
 };
 
-interface AggregatedReceipt {
+const categorizeOilType = (productName: string): string => {
+  if (!productName) return 'Other Oils';
+  const n = productName.toLowerCase();
+  if (n.includes('rice bran oil') || n.includes('rbo') || n.includes('rice bran')) return 'Rice Bran Oil';
+  if (n.includes('soybean') || n.includes('soya') || n.includes('sbo')) return 'Soybean Oil';
+  if (n.includes('palm') || n.includes('palmolein')) return 'Palm Oil';
+  if (n.includes('mustard') || n.includes('kachi ghani')) return 'Mustard Oil';
+  if (n.includes('sunflower')) return 'Sunflower Oil';
+  if (n.includes('groundnut')) return 'Groundnut Oil';
+  return 'Other Oils';
+};
+
+const categorizeItemToBePacked = (productName: string): string => {
+  if (!productName) return '-';
+  const n = categorizeOilType(productName);
+  if (n === 'Soybean Oil') return 'SBO';
+  if (n === 'Rice Bran Oil') return 'RBO';
+  if (n === 'Palm Oil') return 'PALM';
+  if (n === 'Mustard Oil') return 'MUSTARD';
+  if (n === 'Sunflower Oil') return 'SUNFLOWER';
+  if (n === 'Groundnut Oil') return 'GROUNDNUT';
+  return '-';
+};
+
+const getStatusColor = (status: string) => {
+  switch (status?.toLowerCase()) {
+    case 'received':  return 'bg-green-100 text-green-800';
+    case 'pending':   return 'bg-yellow-100 text-yellow-800';
+    case 'planned':   return 'bg-blue-100 text-blue-800';
+    default:          return 'bg-gray-100 text-gray-800';
+  }
+};
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface OilReceiptItem {
+  id: number;
+  production_id: string;
+  status: string;
+  received_qty?: number;
+  received_by?: string;
+  received_date?: string;
+  remarks?: string;
+  indentDetails: {
+    product_name: string;
+    packing_size: string;
+    packing_type: string;
+    party_name: string;
+    indent_quantity: number;
+    total_weight_kg: number;
+    tank_no: string;
+    actual_qty_kg?: number;
+    approved_qty?: number;
+    given_from_tank_no?: string;
+    created_at: string;
+  };
+}
+
+interface ProductGroup {
   productKey: string;
   productName: string;
   packingSize?: string;
+  packingType: string;
   totalQuantity: number;
+  totalWeightKg: number;
   availableStock: number;
   shortage: number;
-  packingType: string;
   status: string;
+  tankNo?: string;
+  actualQtyKg: number;
+  approvedQtyKg: number;
   items: OilReceiptItem[];
+}
+
+interface OilTypeGroup {
+  type: string;
+  totalQuantity: number;
+  totalWeightKg: number;
+  actualQtyKg: number;
+  approvedQtyKg: number;
+  products: ProductGroup[];
 }
 
 const OilReceipt = () => {
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
   const [showForm, setShowForm] = useState(false);
-  const [receipts, setReceipts] = useState<OilReceiptItem[]>([]);
-  const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
-  const [selectedProduct, setSelectedProduct] = useState<string>('');
-  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [items, setItems] = useState<OilReceiptItem[]>([]);
+
+  // Form state
+  const [formDetailsExpanded, setFormDetailsExpanded] = useState<boolean>(false);
+  const [selectedOilType, setSelectedOilType] = useState<string>('');
+  const [selectedProductionIds, setSelectedProductionIds] = useState<string[]>([]);
   const [formData, setFormData] = useState({
-    receivedQuantity: '',
     receivedBy: '',
     receivedDate: new Date().toISOString().split('T')[0],
     remarks: '',
   });
 
+  const fetchReceipts = async () => {
+    setLoading(true);
+    try {
+      const endpoint = activeTab === 'pending' ? '/oil-receipt/pending' : '/oil-receipt/history';
+      const response = await fetch(`${API_BASE_URL}${endpoint}`);
+      const data = await response.json();
+      if (data.status === 'success') {
+        const mapped = data.data.map((item: any) => {
+          if (activeTab === 'pending') {
+            return {
+              id: item.id,
+              production_id: item.production_id,
+              status: 'Pending',
+              indentDetails: {
+                product_name: item.product_name,
+                packing_size: item.packing_size,
+                packing_type: item.packing_type,
+                party_name: item.party_name,
+                indent_quantity: parseFloat(item.indent_quantity),
+                total_weight_kg: parseFloat(item.total_weight_kg || 0),
+                tank_no: item.tank_no,
+                actual_qty_kg: item.actual_qty_kg ? parseFloat(item.actual_qty_kg) : undefined,
+                approved_qty: item.approved_qty ? parseFloat(item.approved_qty) : undefined,
+                given_from_tank_no: item.given_from_tank_no,
+                created_at: item.created_at,
+              }
+            };
+          }
+          return {
+            ...item,
+            indentDetails: {
+              ...item.indentDetails,
+              indent_quantity: parseFloat(item.indentDetails?.indent_quantity || 0),
+              total_weight_kg: parseFloat(item.indentDetails?.total_weight_kg || 0),
+              actual_qty_kg: item.indentDetails?.actual_qty_kg ? parseFloat(item.indentDetails.actual_qty_kg) : undefined,
+              approved_qty: item.indentDetails?.approved_qty ? parseFloat(item.indentDetails.approved_qty) : undefined,
+              given_from_tank_no: item.indentDetails?.given_from_tank_no,
+            }
+          };
+        });
+        setItems(mapped);
+      }
+    } catch (error) {
+      console.error('Error fetching receipts:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    initializeDefaultStocks();
-    const savedReceipts = getOilReceipts();
-    setReceipts(savedReceipts);
-  }, []);
+    fetchReceipts();
+  }, [activeTab]);
 
-  // Aggregate receipts by product
-  const aggregateReceipts = (receiptsList: OilReceiptItem[]): AggregatedReceipt[] => {
-    const aggregated: { [key: string]: AggregatedReceipt } = {};
+  // ── Grouping ──────────────────────────────────────────────────────────────
 
-    receiptsList.forEach(receipt => {
-      const productKey = normalizeProductKey(receipt.productName, receipt.packingSize);
-      
-      if (!aggregated[productKey]) {
-        const stock = getProductStock(productKey);
-        aggregated[productKey] = {
-          productKey,
-          productName: receipt.productName,
-          packingSize: receipt.packingSize,
-          totalQuantity: 0,
-          availableStock: stock,
-          shortage: 0,
-          packingType: receipt.packingType || '-',
-          status: receipt.status,
-          items: []
-        };
+  const groupByOilType = (list: OilReceiptItem[]): OilTypeGroup[] => {
+    const oilGroups: Record<string, OilTypeGroup> = {};
+
+    list.forEach(item => {
+      const oilType = categorizeOilType(item.indentDetails.product_name);
+      const productKey = normalizeProductKey(item.indentDetails.product_name, item.indentDetails.packing_size);
+
+      if (!oilGroups[oilType]) {
+        oilGroups[oilType] = { type: oilType, totalQuantity: 0, totalWeightKg: 0, actualQtyKg: 0, approvedQtyKg: 0, products: [] };
       }
 
-      aggregated[productKey].totalQuantity += receipt.indentQuantity;
-      aggregated[productKey].items.push(receipt);
+      let productGroup = oilGroups[oilType].products.find(p => p.productKey === productKey);
+      if (!productGroup) {
+        productGroup = {
+          productKey,
+          productName: item.indentDetails.product_name,
+          packingSize: item.indentDetails.packing_size,
+          packingType: item.indentDetails.packing_type || '-',
+          totalQuantity: 0,
+          totalWeightKg: 0,
+          availableStock: 0, // Simplified
+          shortage: 0,
+          status: item.status,
+          tankNo: item.indentDetails.tank_no,
+          actualQtyKg: 0,
+          approvedQtyKg: 0,
+          items: [],
+        };
+        oilGroups[oilType].products.push(productGroup);
+      }
+
+      const qty = activeTab === 'pending' ? item.indentDetails.indent_quantity : (item.received_qty || 0);
+      const weight = item.indentDetails.total_weight_kg || 0;
+      const actualQty = item.indentDetails.actual_qty_kg || 0;
+      const appQty = item.indentDetails.approved_qty || 0;
+      productGroup.totalQuantity += qty;
+      productGroup.totalWeightKg += weight;
+      productGroup.actualQtyKg += actualQty;
+      productGroup.approvedQtyKg += appQty;
+      productGroup.items.push(item);
+      oilGroups[oilType].totalQuantity += qty;
+      oilGroups[oilType].totalWeightKg += weight;
+      oilGroups[oilType].actualQtyKg += actualQty;
+      oilGroups[oilType].approvedQtyKg += appQty;
+
+      if (!productGroup.tankNo && item.indentDetails.tank_no) {
+        productGroup.tankNo = item.indentDetails.tank_no;
+      }
     });
 
-    // Calculate shortage
-    Object.values(aggregated).forEach(agg => {
-      agg.shortage = Math.max(0, agg.totalQuantity - agg.availableStock);
-    });
+    Object.values(oilGroups).forEach(og =>
+      og.products.forEach(pg => {
+        pg.shortage = Math.max(0, pg.totalQuantity - pg.availableStock);
+      })
+    );
 
-    return Object.values(aggregated);
+    return Object.values(oilGroups);
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'received':
-        return 'bg-green-100 text-green-800';
-      case 'pending':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'dispatched':
-        return 'bg-blue-100 text-blue-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
+  // ── Form helpers ──────────────────────────────────────────────────────────
 
-  const handleProductSelect = (productKey: string) => {
-    setSelectedProduct(productKey);
-    const aggregated = aggregateReceipts(pendingReceipts);
-    const product = aggregated.find(p => p.productKey === productKey);
-    
-    if (product) {
-      setSelectedItems(product.items.map(item => item.id));
-      // Auto-fill total quantity
-      const totalQty = product.items.reduce((sum, item) => sum + item.indentQuantity, 0);
-      setFormData(prev => ({ ...prev, receivedQuantity: totalQty.toString() }));
-    }
-  };
-
-  const handleItemToggle = (itemId: string) => {
-    let newSelected: string[];
-    if (selectedItems.includes(itemId)) {
-      newSelected = selectedItems.filter(id => id !== itemId);
+  const handleOilTypeSelect = (oilType: string) => {
+    setSelectedOilType(oilType);
+    const groups = groupByOilType(items);
+    const group = groups.find(g => g.type === oilType);
+    if (group) {
+      const allIds = group.products.flatMap(p => p.items.map(i => i.production_id));
+      setSelectedProductionIds(allIds);
     } else {
-      newSelected = [...selectedItems, itemId];
-    }
-    setSelectedItems(newSelected);
-    
-    // Recalculate received quantity
-    const aggregated = aggregateReceipts(pendingReceipts);
-    const product = aggregated.find(p => p.productKey === selectedProduct);
-    if (product) {
-      const totalQty = product.items
-        .filter(item => newSelected.includes(item.id))
-        .reduce((sum, item) => sum + item.indentQuantity, 0);
-      setFormData(prev => ({ ...prev, receivedQuantity: totalQty.toString() }));
+      setSelectedProductionIds([]);
     }
   };
 
-  const handleReceiptSubmit = () => {
-    if (!selectedProduct || selectedItems.length === 0) {
-      alert('Please select a product and at least one item');
+  const handleItemToggle = (productionId: string) => {
+    setSelectedProductionIds(prev => 
+      prev.includes(productionId) 
+        ? prev.filter(id => id !== productionId) 
+        : [...prev, productionId]
+    );
+  };
+
+  const handleReceiptSubmit = async () => {
+    if (!selectedOilType || selectedProductionIds.length === 0) {
+      alert('Please select an oil type and at least one item');
       return;
     }
 
@@ -146,54 +271,45 @@ const OilReceipt = () => {
       return;
     }
 
-    // Update selected items with receipt data
-    const updatedReceipts = receipts.map(r => {
-      if (selectedItems.includes(r.id)) {
-        return {
-          ...r,
-          receivedQty: Number(formData.receivedQuantity),
-          receivedBy: formData.receivedBy,
-          receivedDate: formData.receivedDate,
-          remarks: formData.remarks,
-          status: 'Received' as any,
-        };
-      }
-      return r;
-    });
+    setLoading(true);
+    try {
+      for (const prodId of selectedProductionIds) {
+        const item = items.find(i => i.production_id === prodId);
+        if (!item) continue;
 
-    // Move each selected item to Raw Material Indent (this also removes them from oil_receipts)
-    updatedReceipts.forEach(r => {
-      if (selectedItems.includes(r.id)) {
-        moveToRawMaterialIndent(r);
+        await fetch(`${API_BASE_URL}/oil-receipt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            productionId: prodId,
+            receivedQty: item.indentDetails.indent_quantity,
+            receivedBy: formData.receivedBy,
+            receivedDate: formData.receivedDate,
+            remarks: formData.remarks,
+          }),
+        });
       }
-    });
-    
-    // Update local state to remove processed items
-    const remainingReceipts = updatedReceipts.filter(r => !selectedItems.includes(r.id));
-    setReceipts(remainingReceipts);
-
-    // Reset form
-    setShowForm(false);
-    setSelectedProduct('');
-    setSelectedItems([]);
-    setFormData({
-      receivedQuantity: '',
-      receivedBy: '',
-      receivedDate: new Date().toISOString().split('T')[0],
-      remarks: '',
-    });
+      
+      alert('Receipt confirmed successfully');
+      setShowForm(false);
+      setSelectedOilType('');
+      setSelectedProductionIds([]);
+      setFormData({
+        receivedBy: '',
+        receivedDate: new Date().toISOString().split('T')[0],
+        remarks: '',
+      });
+      fetchReceipts();
+    } catch (error) {
+      console.error('Error submitting receipt:', error);
+      alert('Failed to submit receipt');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const pendingReceipts = receipts.filter((r) => r.status !== 'Received');
-  const historyReceipts = receipts.filter((r) => r.status === 'Received');
-
-  const displayReceipts = activeTab === 'pending' ? pendingReceipts : historyReceipts;
-  const aggregatedReceipts = aggregateReceipts(displayReceipts);
-
-  const uniqueProducts = aggregateReceipts(pendingReceipts).map(a => ({
-    key: a.productKey,
-    name: `${a.productName}${a.packingSize ? ' ' + a.packingSize : ''}`
-  }));
+  const oilTypeGroups = groupByOilType(items);
+  const uniqueOilTypes = oilTypeGroups.map(g => g.type);
 
   return (
     <div className="p-6 bg-background">
@@ -202,32 +318,24 @@ const OilReceipt = () => {
         description="Packaging head receives oil from plant person and confirms received quantity"
       />
 
-      {/* Tabs and Action Button */}
       <div className="flex justify-between items-center mb-6">
         <div className="flex gap-2">
-          <button
-            onClick={() => setActiveTab('pending')}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'pending'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-card text-card-foreground border border-border'
-            }`}
-          >
-            Pending
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'history'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-card text-card-foreground border border-border'
-            }`}
-          >
-            History
-          </button>
+          {(['pending', 'history'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors capitalize ${
+                activeTab === tab
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-card text-card-foreground border border-border'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
 
-        {activeTab === 'pending' && pendingReceipts.length > 0 && (
+        {activeTab === 'pending' && items.length > 0 && (
           <Button 
             onClick={() => setShowForm(true)}
             className="flex items-center gap-2"
@@ -238,229 +346,275 @@ const OilReceipt = () => {
         )}
       </div>
 
-      {/* Aggregated Receipt Table */}
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-card border-b border-border">
               <tr>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground w-8"></th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Product Name</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Qty</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground w-8" />
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Product Name / Oil Type</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Item to be packed</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Approval Qty (Kg)</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Available Stock</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Shortage</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Dispatch (Kg)</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Tank No.</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Give Tank No.</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Packing Type</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Status</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
-              {aggregatedReceipts.map((aggregate) => {
-                const isExpanded = expandedProduct === aggregate.productKey;
-                const displayName = `${aggregate.productName}${aggregate.packingSize ? ' ' + aggregate.packingSize : ''}`;
-                
-                return (
-                  <>
-                    <tr 
-                      key={aggregate.productKey} 
-                      className="hover:bg-card/50 transition-colors cursor-pointer"
-                      onClick={() => setExpandedProduct(isExpanded ? null : aggregate.productKey)}
-                    >
-                      <td className="px-4 py-3 text-sm">
-                        {isExpanded ? (
-                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground font-medium">
-                        {displayName}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground font-semibold">
-                        {aggregate.totalQuantity}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground">
-                        {aggregate.availableStock}
-                      </td>
-                      <td className={`px-4 py-3 text-sm font-semibold ${aggregate.shortage > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        {aggregate.shortage > 0 ? aggregate.shortage : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-foreground">
-                        {aggregate.packingType}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <Badge className={getStatusColor(aggregate.status)}>{aggregate.status}</Badge>
-                      </td>
-                    </tr>
-                    
-                    {/* Expanded Details */}
-                    {isExpanded && aggregate.items.length > 0 && (
-                      <tr>
-                        <td colSpan={7} className="px-4 py-2 bg-card/30">
-                          <div className="pl-8">
-                            <h4 className="font-semibold text-sm mb-2 text-foreground">
-                              Order Details: ({aggregate.items.length} {aggregate.items.length === 1 ? 'order' : 'orders'})
-                            </h4>
-                            <table className="w-full bg-background/50 rounded-lg overflow-hidden">
-                              <thead className="bg-background">
-                                <tr>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Order Ref</th>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Party Name</th>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Quantity</th>
-                                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Oil Type</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-border/50">
-                                {aggregate.items.map((item, idx) => (
-                                  <tr key={idx} className="hover:bg-background/70 transition-colors">
-                                    <td className="px-3 py-2 text-sm text-foreground font-medium">{item.orderRef}</td>
-                                    <td className="px-3 py-2 text-sm text-foreground">{item.partyName || '-'}</td>
-                                    <td className="px-3 py-2 text-sm text-foreground">{item.indentQuantity}</td>
-                                    <td className="px-3 py-2 text-sm text-foreground">{item.selectedOil}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
+            {loading ? (
+              <TableSkeleton cols={11} rows={5} />
+            ) : (
+              <tbody className="divide-y divide-border">
+                {oilTypeGroups.map((group, gi) => {
+                  return (
+                    <Fragment key={gi}>
+                      <tr className="bg-card/50 hover:bg-card transition-colors">
+                        <td className="px-4 py-3 text-sm" />
+                        <td className="px-4 py-3 text-base font-bold text-primary">
+                          {group.type}
+                          <span className="text-sm font-normal text-muted-foreground ml-2">
+                            ({group.products.length} Products)
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-foreground">
+                          <Badge variant="outline" className="font-mono">{categorizeItemToBePacked(group.type)}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-base font-bold text-foreground font-mono">
+                          {formatNumber(group.approvedQtyKg)}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground">-</td>
+                        <td className="px-4 py-3 text-base font-bold text-foreground font-mono">
+                          {formatNumber(group.actualQtyKg)}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-foreground">
+                          {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.tank_no)).filter(v => v && v !== '-'))).join(', ') || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-foreground font-mono">
+                          {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.given_from_tank_no)).filter(v => v && v !== '-'))).join(', ') || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-foreground">
+                          {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.packing_type)).filter(v => v && v !== '-'))).join(', ') || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm">
+                          <Badge variant="outline">
+                            {activeTab === 'pending' ? 'Pending' : 'Received'}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-sm">
+                          {activeTab === 'pending' && (
+                            <Button 
+                              onClick={() => {
+                                setSelectedOilType(group.type);
+                                const allIds = group.products.flatMap(p => p.items.map(i => i.production_id));
+                                setSelectedProductionIds(allIds);
+                                setShowForm(true);
+                              }}
+                              size="sm"
+                              className="bg-primary hover:bg-primary/90"
+                            >
+                              Process
+                            </Button>
+                          )}
                         </td>
                       </tr>
-                    )}
-                  </>
-                );
-              })}
-            </tbody>
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            )}
           </table>
         </div>
-        {aggregatedReceipts.length === 0 && (
+        {!loading && oilTypeGroups.length === 0 && (
           <div className="p-8 text-center text-muted-foreground">
             No {activeTab === 'pending' ? 'pending' : 'history'} receipts
           </div>
         )}
       </Card>
 
-      {/* Oil Receipt Form Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+          <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <h2 className="text-lg font-bold text-foreground mb-4">Process Oil Receipt</h2>
               
-              {/* Product Selection */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-foreground mb-2">Select Product</label>
-                <select
-                  value={selectedProduct}
-                  onChange={(e) => handleProductSelect(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
-                >
-                  <option value="">-- Select Product --</option>
-                  {uniqueProducts.map(product => (
-                    <option key={product.key} value={product.key}>{product.name}</option>
-                  ))}
-                </select>
-              </div>
+              {selectedOilType && (() => {
+                const group = oilTypeGroups.find(g => g.type === selectedOilType);
+                if (!group) return null;
 
-              {selectedProduct && (
-                <>
-                  {/* Order Selection */}
-                  <div className="mb-6">
-                    <label className="block text-sm font-medium text-foreground mb-3">
-                      Select Orders to Process
-                    </label>
-                    <div className="border border-border rounded-lg p-4 bg-card max-h-40 overflow-y-auto">
-                      {aggregateReceipts(pendingReceipts)
-                        .find(p => p.productKey === selectedProduct)
-                        ?.items.map((item, idx) => (
-                          <div key={idx} className="flex items-center justify-between py-2 hover:bg-background/50 px-2 rounded">
-                            <label className="flex items-center gap-3 flex-1 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={selectedItems.includes(item.id)}
-                                onChange={() => handleItemToggle(item.id)}
-                                className="w-4 h-4 rounded border-border"
-                              />
-                              <span className="text-sm font-medium text-foreground">
-                                {item.orderRef} - {item.partyName || 'Unknown Party'}
-                              </span>
-                            </label>
-                            <div className="flex gap-4 text-sm text-muted-foreground">
-                              <span>Qty: {item.indentQuantity}</span>
+                return (
+                  <>
+                    {/* Context Header */}
+                    <div className="bg-muted/30 p-4 rounded-lg border border-border mb-6">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <h3 className="text-lg font-bold text-primary">{selectedOilType}</h3>
+                          <p className="text-xs text-muted-foreground">Receive oil from plant person and confirm receipt.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Item to be packed section - Always Visible */}
+                    <div className="mb-6 p-4 bg-muted/30 rounded-lg border border-border">
+                        <p className="text-xs font-semibold mb-1 text-muted-foreground uppercase tracking-wider">Item(s) to be packed</p>
+                        <div className="text-lg font-bold text-primary">
+                            {Array.from(new Set(group.products.flatMap(p => {
+                              const parts = p.productName.split(' ');
+                              return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
+                            }))).join(', ')}
+                        </div>
+                    </div>
+                    {/* Order Details — grouped by product, collapsible */}
+                    <div className="mb-6">
+                      <div className="flex justify-between items-center mb-2">
+                        <h3 className="text-sm font-bold text-foreground">Order Details</h3>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setFormDetailsExpanded(!formDetailsExpanded)}
+                          className="h-8 py-0 underline text-primary"
+                        >
+                          {formDetailsExpanded ? 'Hide Details' : 'Show Details'}
+                        </Button>
+                      </div>
+                      
+                      {formDetailsExpanded && (
+                        <div className="space-y-3">
+                          {group.products.map((prod, pi) => (
+                            <div key={pi} className="border border-border rounded-lg overflow-hidden">
+                              <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
+                                <span className="text-sm font-semibold text-foreground">
+                                  {prod.productName}{prod.packingSize ? ' ' + prod.packingSize : ''}
+                                </span>
+                                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                                  <span>Stock: {prod.availableStock}</span>
+                                  {prod.shortage > 0 && (
+                                    <span className="text-red-600 font-semibold">Shortage: {formatNumber(prod.shortage)}</span>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              <table className="w-full text-sm">
+                                <thead className="bg-muted/20 border-b border-border">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Timestamp</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground w-12">Select</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Production ID</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Indent Qty (Kg)</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Tank No.</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Give Tank No.</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border bg-background">
+                                  {prod.items.map((item, idx) => (
+                                    <tr key={idx} className="hover:bg-muted/30">
+                                      <td className="px-3 py-2 text-xs text-muted-foreground">
+                                        {(() => {
+                                          const d = item.indentDetails?.created_at;
+                                          return d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
+                                        })()}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedProductionIds.includes(item.production_id)}
+                                          onChange={() => handleItemToggle(item.production_id)}
+                                          className="w-4 h-4 rounded border-primary text-primary"
+                                        />
+                                      </td>
+                                      <td className="px-3 py-2 font-mono text-xs">{item.production_id}</td>
+                                      <td className="px-3 py-2 font-semibold text-primary">{formatNumber(item.indentDetails.indent_quantity)}</td>
+                                      <td className="px-3 py-2">{item.indentDetails.tank_no || '-'}</td>
+                                      <td className="px-3 py-2">{item.indentDetails.given_from_tank_no || '-'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
 
-                  {/* Form Fields Grid */}
-                  <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-2">Received Quantity (MT)</label>
-                      <input
-                        type="number"
-                        value={formData.receivedQuantity}
-                        onChange={(e) => setFormData({ ...formData, receivedQuantity: e.target.value })}
-                        className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
+                    {/* Tank Details Summary */}
+                    <div className="mb-6 grid grid-cols-2 gap-4">
+                      <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                        <span className="text-xs text-blue-600 uppercase font-semibold">Receive Tank No:</span>
+                        <p className="font-bold text-foreground">
+                          {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.tank_no)).filter(v => v && v !== '-'))).join(', ') || 'N/A'}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-green-50 border border-green-100 rounded-lg">
+                        <span className="text-xs text-green-600 uppercase font-semibold">Give Tank No:</span>
+                        <p className="font-bold text-foreground">
+                          {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.given_from_tank_no)).filter(v => v && v !== '-'))).join(', ') || 'N/A'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div>
+                        <label className="block text-sm font-medium text-foreground mb-2">
+                          Received By <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.receivedBy}
+                          onChange={(e) => setFormData({ ...formData, receivedBy: e.target.value })}
+                          className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
+                          placeholder="Name of Receiver"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-foreground mb-2">Received Date</label>
+                        <input
+                          type="date"
+                          value={formData.receivedDate}
+                          onChange={(e) => setFormData({ ...formData, receivedDate: e.target.value })}
+                          className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium text-foreground mb-2">Remarks</label>
+                      <textarea
+                        value={formData.remarks}
+                        onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
+                        placeholder="Add any remarks or notes"
+                        className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground h-20"
                       />
                     </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-2">
-                        Received By <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.receivedBy}
-                        onChange={(e) => setFormData({ ...formData, receivedBy: e.target.value })}
-                        className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
-                        placeholder="Name of Receiver"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-2">Received Date</label>
-                      <input
-                        type="date"
-                        value={formData.receivedDate}
-                        onChange={(e) => setFormData({ ...formData, receivedDate: e.target.value })}
-                        className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Remarks */}
-                  <div className="mb-6">
-                    <label className="block text-sm font-medium text-foreground mb-2">Remarks</label>
-                    <textarea
-                      value={formData.remarks}
-                      onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
-                      placeholder="Add any remarks or notes"
-                      className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground h-20"
-                    />
-                  </div>
-                </>
-              )}
+                  </>
+                );
+              })()}
 
               <div className="flex justify-end gap-2">
                 <Button
                   variant="outline"
                   onClick={() => {
                     setShowForm(false);
-                    setSelectedProduct('');
-                    setSelectedItems([]);
+                    setSelectedOilType('');
+                    setSelectedProductionIds([]);
                     setFormData({
-                      receivedQuantity: '',
                       receivedBy: '',
                       receivedDate: new Date().toISOString().split('T')[0],
                       remarks: '',
                     });
                   }}
+                  disabled={loading}
                 >
                   Cancel
                 </Button>
                 <Button 
                   onClick={handleReceiptSubmit}
                   className="bg-primary hover:bg-primary/90"
-                  disabled={!selectedProduct || selectedItems.length === 0 || !formData.receivedBy}
+                  disabled={!selectedOilType || selectedProductionIds.length === 0 || !formData.receivedBy || loading}
                 >
+                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Confirm Receipt
                 </Button>
               </div>

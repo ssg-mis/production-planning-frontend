@@ -22,12 +22,16 @@ interface BOMConsumption {
 }
 
 interface ProductionEntryItem {
-  id: string; // production_id
+  id: string; // receiptId (assigned in fetchData)
+  production_id: string;
+  receiptId?: number;
   productName: string;
   packingSize: string;
   packingType: string;
   partyName: string;
-  plannedQty: number;
+  plannedQty: number; // For this stage, this is the remaining oilQty from receipt
+  oilQty: number; // Remaining oil qty
+  totalReceivedQty: number; // Total oil qty received in that receipt
   totalWeightKg: number;
   tankNo: string;
   givenTankNo: string;
@@ -50,6 +54,7 @@ interface ProductGroup {
   packingSize?: string;
   packingType: string;
   totalQuantity: number;
+  totalReceivedQuantity: number;
   totalWeightKg: number;
   items: ProductionEntryItem[];
 }
@@ -57,6 +62,7 @@ interface ProductGroup {
 interface OilTypeGroup {
   type: string;
   totalQuantity: number;
+  totalReceivedQuantity: number;
   totalWeightKg: number;
   products: ProductGroup[];
 }
@@ -132,12 +138,16 @@ const ProductionEntry = () => {
         const mappedData = result.data.map((item: any) => {
           if (activeTab === 'history') {
              return {
-                id: item.production_id,
+                id: String(item.receipt_id || item.production_id || Math.random()),
+                production_id: item.production_id,
+                receiptId: item.receipt_id,
                 productName: item.indentDetails?.product_name || 'N/A',
                 packingSize: item.indentDetails?.packing_size || '',
                 packingType: item.indentDetails?.packing_type || '',
                 partyName: item.indentDetails?.party_name || 'N/A',
-                plannedQty: Number(item.indentDetails?.indent_quantity || 0),
+                plannedQty: Number(item.oil_qty || 0),
+                oilQty: Number(item.oil_qty || 0),
+                totalReceivedQty: Number(item.total_received_qty || item.oil_qty || 0),
                 totalWeightKg: Number(item.indentDetails?.total_weight_kg || 0),
                 tankNo: item.indentDetails?.tank_no || '-',
                 givenTankNo: item.indentDetails?.given_from_tank_no || '-',
@@ -150,12 +160,16 @@ const ProductionEntry = () => {
              };
           }
           return {
-            id: item.production_id,
+            id: String(item.receipt_id || item.production_id),
+            production_id: item.production_id,
+            receiptId: item.receipt_id,
             productName: item.product_name,
             packingSize: item.packing_size || '',
             packingType: item.packing_type || '',
             partyName: item.party_name,
-            plannedQty: Number(item.indent_quantity || 0),
+            plannedQty: Number(item.oil_qty || 0),
+            oilQty: Number(item.oil_qty || 0),
+            totalReceivedQty: Number(item.total_received_qty || 0),
             totalWeightKg: Number(item.total_weight_kg || 0),
             tankNo: item.tank_no || '-',
             givenTankNo: item.given_from_tank_no || '-',
@@ -184,7 +198,7 @@ const ProductionEntry = () => {
       const productKey = normalizeProductKey(item.productName, item.packingSize);
 
       if (!oilGroups[oilType]) {
-        oilGroups[oilType] = { type: oilType, totalQuantity: 0, totalWeightKg: 0, products: [] };
+        oilGroups[oilType] = { type: oilType, totalQuantity: 0, totalReceivedQuantity: 0, totalWeightKg: 0, products: [] };
       }
 
       let productGroup = oilGroups[oilType].products.find(p => p.productKey === productKey);
@@ -195,6 +209,7 @@ const ProductionEntry = () => {
           packingSize: item.packingSize,
           packingType: item.packingType || '-',
           totalQuantity: 0,
+          totalReceivedQuantity: 0,
           totalWeightKg: 0,
           items: [],
         };
@@ -202,9 +217,11 @@ const ProductionEntry = () => {
       }
 
       productGroup.totalQuantity += item.plannedQty;
+      productGroup.totalReceivedQuantity += item.totalReceivedQty;
       productGroup.totalWeightKg += item.totalWeightKg;
       productGroup.items.push(item);
       oilGroups[oilType].totalQuantity += item.plannedQty;
+      oilGroups[oilType].totalReceivedQuantity += item.totalReceivedQty;
       oilGroups[oilType].totalWeightKg += item.totalWeightKg;
     });
 
@@ -236,6 +253,13 @@ const ProductionEntry = () => {
           // Distribute actual qty produced
           const itemActualQty = Number((totalActualProduced * ratio).toFixed(2));
           
+          // Distribute the oil qty used for this production run
+          // If the user produces partial, we should probably let them specify the oil_qty used.
+          // For now, let's assume actualQty produced is the same as oilQty used if it's 1:1, 
+          // or just use the proportion of oil qty.
+          // The user specifically asked for "remaining produced qty" tracking.
+          const itemOilUsed = Number((item.plannedQty * (itemActualQty / (totalActualProduced || 1))).toFixed(2));
+
           // Distribute BOM consumption
           const itemBOM = totalBOM.map(b => ({
             ...b,
@@ -249,7 +273,9 @@ const ProductionEntry = () => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              productionId: item.id,
+              productionId: item.production_id,
+              receiptId: item.receiptId,
+              oilQty: itemActualQty, // Using produced qty as basis for oil consumption tracking
               actualQty: itemActualQty,
               remarks,
               processedBy: 'Production Head',
@@ -257,7 +283,7 @@ const ProductionEntry = () => {
             })
           });
 
-          if (!response.ok) throw new Error(`Failed to process production entry for ${item.id}`);
+          if (!response.ok) throw new Error(`Failed to process production entry for ${item.production_id}`);
         }
       }
 
@@ -315,11 +341,11 @@ const ProductionEntry = () => {
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Type of Oil</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Item(s) to be packed</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Issue Qty</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Oil Qty (KG)</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Given Tank No.</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Tank No.</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Status</th>
-                {activeTab === 'history' && <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Actual Qty</th>}
+                {activeTab === 'history' && <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Actual Qty (KG)</th>}
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Action</th>
               </tr>
             </thead>
@@ -342,7 +368,12 @@ const ProductionEntry = () => {
                         <Badge variant="outline" className="font-mono">{uniqueItemsPacked}</Badge>
                       </td>
                       <td className="px-4 py-3 text-base font-bold text-foreground font-mono">
-                        {formatNumber(group.totalQuantity)}
+                         <div className="flex flex-col">
+                            <span>{formatNumber(group.totalQuantity)} KG</span>
+                            {activeTab === 'pending' && group.totalReceivedQuantity > group.totalQuantity && (
+                                <span className="text-[10px] text-muted-foreground">Total Rec: {formatNumber(group.totalReceivedQuantity)} KG</span>
+                            )}
+                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-foreground">
                         {group.products[0]?.items[0]?.givenTankNo || '-'}
@@ -357,7 +388,7 @@ const ProductionEntry = () => {
                       </td>
                       {activeTab === 'history' && (
                         <td className="px-4 py-3 text-base font-bold text-green-600 font-mono">
-                           {formatNumber(group.products.reduce((acc, p) => acc + p.items.reduce((acc2, i) => acc2 + (i.actualQty || 0), 0), 0))}
+                           {formatNumber(group.products.reduce((acc, p) => acc + p.items.reduce((acc2, i) => acc2 + (i.actualQty || 0), 0), 0))} KG
                         </td>
                       )}
                       <td className="px-4 py-3 text-sm">
@@ -462,6 +493,9 @@ const ProductionEntry = () => {
                         const checkedItems = prod.items.filter(i => selectedItems.includes(i.id));
                         if (checkedItems.length === 0) return null;
 
+                        const totalRemaining = prod.items.reduce((acc, c) => acc + c.plannedQty, 0);
+                        const totalReceived = prod.items.reduce((acc, c) => acc + c.totalReceivedQty, 0);
+
                         return (
                           <div key={pi} className="border border-border rounded-lg overflow-hidden flex flex-col">
                             <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
@@ -469,12 +503,17 @@ const ProductionEntry = () => {
                                 {prod.productName}{prod.packingSize ? ' ' + prod.packingSize : ''}
                               </span>
                               <div className="flex items-center gap-6">
-                                <div className="text-xs">
-                                  <span className="text-muted-foreground mr-1">Received Qty:</span>
-                                  <strong className="text-foreground">{formatNumber(prod.items.reduce((acc, c) => acc + c.plannedQty, 0))}</strong>
+                                <div className="text-xs flex flex-col items-end">
+                                  <div className="flex gap-2">
+                                     <span className="text-muted-foreground">Remaining Oil Qty:</span>
+                                     <strong className="text-foreground">{formatNumber(totalRemaining)}</strong>
+                                  </div>
+                                  {totalReceived > totalRemaining && (
+                                     <div className="text-[10px] text-muted-foreground">Total Received: {formatNumber(totalReceived)}</div>
+                                  )}
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <label className="text-xs font-medium text-muted-foreground">Actual Qty Produced:</label>
+                                  <label className="text-xs font-medium text-muted-foreground">Actual Qty Produced (KG):</label>
                                   <input
                                     type="number"
                                     value={aggregatedQtys[prod.productKey] || ''}
@@ -574,8 +613,13 @@ const ProductionEntry = () => {
                                     {checkedItems.map((item, idx) => (
                                       <div key={idx} className="bg-background p-2 rounded border border-border">
                                         <div className="flex justify-between items-start mb-1">
-                                          <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-mono font-bold">{item.id}</span>
-                                          <span className="text-[10px] text-muted-foreground">Planned: {formatNumber(item.plannedQty)}</span>
+                                          <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-mono font-bold">{item.production_id}</span>
+                                          <span className="text-[10px] text-muted-foreground flex flex-col items-end">
+                                              <span>Rem Oil: {formatNumber(item.plannedQty)} KG</span>
+                                              {item.totalReceivedQty > item.plannedQty && (
+                                                  <span className="text-[8px]">Rec: {formatNumber(item.totalReceivedQty)} KG</span>
+                                              )}
+                                          </span>
                                         </div>
                                         <div className="text-[11px] font-semibold truncate mb-1">{item.partyName}</div>
                                         <div className="text-[10px] text-muted-foreground">Tank: {item.givenTankNo} → {item.tankNo}</div>

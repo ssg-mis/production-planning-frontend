@@ -276,7 +276,7 @@ const DispatchPlanning = () => {
     if (!group) return;
 
     const totalKg = group.products.reduce((acc, p) => 
-      acc + p.items.filter(i => selectedItems.includes(i.id)).reduce((sum, item) => sum + item.totalWeightKg, 0), 0
+      acc + p.items.filter(i => selectedItems.includes(i.id)).reduce((sum, item) => sum + (item.approvedQty || item.totalWeightKg), 0), 0
     );
     setActualQtyKg(totalKg.toFixed(0));
 
@@ -617,27 +617,50 @@ const DispatchPlanning = () => {
                       </div>
                     </div>
 
-                    {/* Quantity Tracking */}
-                    <div className="mb-6 grid grid-cols-2 gap-4">
-                      <div className="p-4 bg-muted/20 border border-border rounded-lg">
-                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Qty to be Dispatched (Kg)</label>
-                        <p className="text-xl font-bold text-primary">
-                          {formatNumber(group.products.reduce((acc, p) => acc + p.items.filter(i => selectedItems.includes(i.id)).reduce((sum, item) => sum + item.totalWeightKg, 0), 0))}
-                        </p>
-                      </div>
-                      <div className="p-4 bg-muted/20 border border-border rounded-lg">
-                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Actual Qty to be Dispatched (Kg)</label>
-                        <input
-                          type="number"
-                          value={actualQtyKg}
-                          onChange={(e) => {
-                            setActualQtyKg(e.target.value);
-                          }}
-                          placeholder="Enter actual Kg"
-                          className="w-full bg-background border-border border rounded px-3 py-1 font-bold text-lg"
-                        />
-                      </div>
-                    </div>
+                    {/* Quantity Tracking — 3 cards */}
+                    {(() => {
+                      const plannedQty = group.products.reduce((acc, p) =>
+                        acc + p.items.filter(i => selectedItems.includes(i.id)).reduce((sum, item) => sum + (item.approvedQty || item.totalWeightKg), 0), 0);
+                      const enteredQty = parseFloat(actualQtyKg) || 0;
+                      const remainingQty = Math.max(0, plannedQty - enteredQty);
+                      return (
+                        <div className="mb-6 grid grid-cols-3 gap-4">
+                          {/* Planned Qty */}
+                          <div className="p-4 bg-muted/20 border border-border rounded-lg">
+                            <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Qty to be Dispatched (Kg)</label>
+                            <p className="text-xl font-bold text-primary">{formatNumber(plannedQty)}</p>
+                          </div>
+                          {/* Remaining */}
+                          <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 rounded-lg">
+                            <label className="block text-xs font-semibold text-yellow-700 dark:text-yellow-400 uppercase mb-1">Remaining Dispatch Qty (Kg)</label>
+                            <p className="text-xl font-bold text-yellow-600 dark:text-yellow-400">{formatNumber(remainingQty)}</p>
+                          </div>
+                          {/* Actual Qty — text input */}
+                          <div className="p-4 bg-muted/20 border border-border rounded-lg">
+                            <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">Actual Qty to be Dispatched (Kg)</label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={actualQtyKg}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                // Allow free typing
+                                setActualQtyKg(val);
+                              }}
+                              onBlur={(e) => {
+                                const val = parseFloat(e.target.value) || 0;
+                                if (val > plannedQty) {
+                                  alert(`Actual qty cannot exceed planned qty (${formatNumber(plannedQty)} Kg)`);
+                                  setActualQtyKg(plannedQty.toFixed(0));
+                                }
+                              }}
+                              placeholder="Enter actual Kg"
+                              className="w-full bg-background border-border border rounded px-3 py-1 font-bold text-lg mt-1"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Chemical Additives Section */}
                     {(selectedProduct === 'Rice Bran Oil' || selectedProduct === 'Soybean Oil' || selectedProduct === 'Palm Oil') && (

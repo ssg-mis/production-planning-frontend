@@ -12,12 +12,15 @@ import TableSkeleton from '@/components/table-skeleton';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface RawMaterialReceiptItem {
-  id: string; // production_id
+  id: string; // Unique key for selection (issueId or production_id)
+  production_id: string;
+  issueId?: number;
   productName: string;
   packingSize: string;
   packingType: string;
   partyName: string;
-  plannedQty: number;
+  plannedQty: number; // Shows oilQty
+  oilQty: number;
   totalWeightKg: number;
   tankNo: string;
   givenTankNo: string;
@@ -109,12 +112,15 @@ const RawMaterialReceipt = () => {
         const mappedData = result.data.map((item: any) => {
           if (activeTab === 'history') {
              return {
-                id: item.production_id,
+                id: String(item.issue_id || item.production_id || Math.random()),
+                production_id: item.production_id,
+                issueId: item.issue_id,
                 productName: item.indentDetails?.product_name || 'N/A',
                 packingSize: item.indentDetails?.packing_size || '',
                 packingType: item.indentDetails?.packing_type || '',
                 partyName: item.indentDetails?.party_name || 'N/A',
-                plannedQty: Number(item.indentDetails?.indent_quantity || 0),
+                plannedQty: Number(item.oil_qty || 0),
+                oilQty: Number(item.oil_qty || 0),
                 totalWeightKg: Number(item.indentDetails?.total_weight_kg || 0),
                 tankNo: item.indentDetails?.tank_no || '-',
                 givenTankNo: item.indentDetails?.given_from_tank_no || '-',
@@ -123,12 +129,15 @@ const RawMaterialReceipt = () => {
              };
           }
           return {
-            id: item.production_id,
+            id: String(item.issue_id || item.id || item.production_id),
+            production_id: item.production_id,
+            issueId: item.issue_id,
             productName: item.product_name,
             packingSize: item.packing_size || '',
             packingType: item.packing_type || '',
             partyName: item.party_name,
-            plannedQty: Number(item.indent_quantity || 0),
+            plannedQty: Number(item.oil_qty || 0),
+            oilQty: Number(item.oil_qty || 0),
             totalWeightKg: Number(item.total_weight_kg || 0),
             tankNo: item.tank_no || '-',
             givenTankNo: item.given_from_tank_no || '-',
@@ -191,18 +200,23 @@ const RawMaterialReceipt = () => {
     }
 
     try {
-      for (const productionId of selectedItems) {
+      for (const id of selectedItems) {
+        const item = receipts.find(r => r.id === id);
+        if (!item) continue;
+
         const response = await fetch(`${API_BASE_URL}/raw-material-receipt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            productionId,
+            productionId: item.production_id,
+            issueId: item.issueId,
+            oilQty: item.oilQty,
             remarks,
-            receivedBy: 'Production Head' // Hardcoded for now
+            receivedBy: 'Production Head'
           })
         });
 
-        if (!response.ok) throw new Error(`Failed to process receipt for ${productionId}`);
+        if (!response.ok) throw new Error(`Failed to process receipt for ${item.production_id}`);
       }
 
       alert('✅ Raw materials received successfully!');
@@ -257,7 +271,7 @@ const RawMaterialReceipt = () => {
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Type of Oil</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Item(s) to be packed</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Issue Qty</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Oil Qty (KG)</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Given Tank No.</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Tank No.</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Status</th>
@@ -283,7 +297,7 @@ const RawMaterialReceipt = () => {
                       <Badge variant="outline" className="font-mono">{uniqueItemsPacked}</Badge>
                     </td>
                     <td className="px-4 py-3 text-base font-bold text-foreground font-mono">
-                      {formatNumber(group.totalQuantity)}
+                      {formatNumber(group.totalQuantity)} KG
                     </td>
                     <td className="px-4 py-3 text-sm text-foreground">
                       {group.products[0]?.items[0]?.givenTankNo || '-'}
@@ -385,7 +399,7 @@ const RawMaterialReceipt = () => {
                                   {prod.productName}{prod.packingSize ? ' ' + prod.packingSize : ''}
                                 </span>
                                 <div className="text-xs text-muted-foreground">
-                                  Selected: <strong>{formatNumber(checkedItems.reduce((acc, c) => acc + c.plannedQty, 0))}</strong>
+                                  Selected Oil Qty: <strong>{formatNumber(checkedItems.reduce((acc, c) => acc + c.oilQty, 0))}</strong>
                                 </div>
                               </div>
 
@@ -397,7 +411,7 @@ const RawMaterialReceipt = () => {
                                       <th className="px-3 py-2 text-left font-medium text-muted-foreground">Production ID</th>
                                       <th className="px-4 py-2 text-left font-medium text-muted-foreground">Tank Info</th>
                                       <th className="px-4 py-2 text-left font-medium text-muted-foreground">Party Name</th>
-                                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Qty</th>
+                                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Oil Qty</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-border bg-background">
@@ -415,7 +429,7 @@ const RawMaterialReceipt = () => {
                                             className="w-4 h-4 rounded border-primary text-primary"
                                           />
                                         </td>
-                                        <td className="px-3 py-2 font-mono text-xs">{item.id}</td>
+                                        <td className="px-3 py-2 font-mono text-xs">{item.production_id}</td>
                                         <td className="px-4 py-2 text-xs">
                                           <div className="flex flex-col">
                                             <span>Tank: {item.tankNo}</span>
@@ -423,7 +437,7 @@ const RawMaterialReceipt = () => {
                                           </div>
                                         </td>
                                         <td className="px-4 py-2">{item.partyName}</td>
-                                        <td className="px-3 py-2 font-semibold text-primary">{formatNumber(item.plannedQty)}</td>
+                                        <td className="px-3 py-2 font-semibold text-primary">{formatNumber(item.oilQty)}</td>
                                       </tr>
                                     ))}
                                   </tbody>

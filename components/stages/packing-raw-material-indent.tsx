@@ -21,6 +21,8 @@ interface RawMaterialIndentItem {
   actualDispatchKg: number;
   balanceQty: number;
   balanceKg: number;
+  totalReceivedQty?: number;
+  totalReceivedKg?: number;
   tankNo?: string;
   givenFromTankNo?: string;
   status: string;
@@ -31,6 +33,7 @@ interface RawMaterialIndentItem {
     mainqty: string;
     mainuom: string;
   }>;
+  skuBoms: Array<{ skuName: string; bom: Array<{ rmname: string; rmqty: string; rmunit: string; mainqty: string; mainuom: string }> }>;
 }
 
 interface AggregatedProduct {
@@ -42,6 +45,7 @@ interface AggregatedProduct {
   totalActualDispatchKg: number;
   totalBalanceQty: number;
   totalBalanceKg: number;
+  totalReceivedKg: number;
   shortage: number;
   availableStock: number;
   orders: RawMaterialIndentItem[];
@@ -55,6 +59,7 @@ interface OilTypeGroup {
   totalActualDispatchKg: number;
   totalBalanceQty: number;
   totalBalanceKg: number;
+  totalReceivedKg: number;
   products: AggregatedProduct[];
 }
 
@@ -128,11 +133,14 @@ const PackingRawMaterialIndent = () => {
           actualDispatchQty: Number(item.actual_dispatch_qty || item.indent_quantity || 0),
           actualDispatchKg: Number(item.actual_dispatch_kg || 0),
           balanceQty: Number(item.balance_qty || 0),
-          balanceKg: (Number(item.indent_quantity) > 0) ? (Number(item.balance_qty || 0) * (Number(item.actual_dispatch_kg || 0) / Number(item.indent_quantity))) : 0,
+          balanceKg: Number(item.balance_kg || 0),
+          totalReceivedQty: Number(item.total_received_qty || 0),
+          totalReceivedKg: Number(item.total_received_kg || 0),
           tankNo: item.tank_no || '-',
           givenFromTankNo: item.given_from_tank_no || '-',
           status: 'Pending',
-          bom: Array.isArray(item.bom) ? item.bom : []
+          bom: Array.isArray(item.bom) ? item.bom : [],
+          skuBoms: Array.isArray(item.sku_boms) ? item.sku_boms : [],
         }));
         setIndents(mappedData);
       } else {
@@ -146,8 +154,10 @@ const PackingRawMaterialIndent = () => {
           plannedQty: Number(item.indentDetails?.indent_quantity || 0),
           actualDispatchQty: Number(item.indentDetails?.actual_dispatch_qty || item.indentDetails?.indent_quantity || 0),
           actualDispatchKg: Number(item.indentDetails?.actual_dispatch_kg || 0),
-          balanceQty: Number(item.indentDetails?.balance_qty || 0),
-          balanceKg: (Number(item.indentDetails?.indent_quantity) > 0) ? (Number(item.indentDetails?.balance_qty || 0) * (Number(item.indentDetails?.actual_dispatch_kg || 0) / Number(item.indentDetails?.indent_quantity))) : 0,
+          balanceQty: Number(item.oil_qty || 0),
+          balanceKg: Number(item.oil_qty || 0), // In history, we use oil_qty as the indented amount
+          totalReceivedQty: Number(item.indentDetails?.total_received_qty || 0),
+          totalReceivedKg: Number(item.indentDetails?.total_received_kg || 0),
           tankNo: item.indentDetails?.tank_no || '-',
           givenFromTankNo: item.indentDetails?.given_from_tank_no || '-',
           status: item.status,
@@ -157,7 +167,8 @@ const PackingRawMaterialIndent = () => {
             rmunit: '',
             mainqty: '1',
             mainuom: 'Box'
-          }))
+          })),
+          skuBoms: [],
         }));
         setIndents(mappedData);
       }
@@ -180,7 +191,16 @@ const PackingRawMaterialIndent = () => {
       const productKey = normalizeProductKey(item.productName, item.packingSize);
 
       if (!groups[oilType]) {
-        groups[oilType] = { type: oilType, totalPlannedQty: 0, totalActualDispatchQty: 0, totalActualDispatchKg: 0, totalBalanceQty: 0, totalBalanceKg: 0, products: [] };
+        groups[oilType] = { 
+          type: oilType, 
+          totalPlannedQty: 0, 
+          totalActualDispatchQty: 0, 
+          totalActualDispatchKg: 0, 
+          totalBalanceQty: 0, 
+          totalBalanceKg: 0, 
+          totalReceivedKg: 0,
+          products: [] 
+        };
       }
 
       let productGroup = groups[oilType].products.find(p => p.id === productKey);
@@ -194,6 +214,7 @@ const PackingRawMaterialIndent = () => {
           totalActualDispatchKg: 0,
           totalBalanceQty: 0,
           totalBalanceKg: 0,
+          totalReceivedKg: 0,
           shortage: 0,
           availableStock: 5000, // Placeholder
           orders: [],
@@ -207,11 +228,14 @@ const PackingRawMaterialIndent = () => {
       groups[oilType].totalActualDispatchKg += item.actualDispatchKg;
       groups[oilType].totalBalanceQty += item.balanceQty;
       groups[oilType].totalBalanceKg += item.balanceKg;
+      groups[oilType].totalReceivedKg += (item.totalReceivedKg || 0);
+
       productGroup.totalPlannedQty += item.plannedQty;
       productGroup.totalActualDispatchQty += item.actualDispatchQty;
       productGroup.totalActualDispatchKg += item.actualDispatchKg;
       productGroup.totalBalanceQty += item.balanceQty;
       productGroup.totalBalanceKg += item.balanceKg;
+      productGroup.totalReceivedKg += (item.totalReceivedKg || 0);
       productGroup.orders.push(item);
     });
 
@@ -252,32 +276,55 @@ const PackingRawMaterialIndent = () => {
       
       for (const order of ordersToSubmit) {
         // Compute base order payload resolving explicit fraction mappings proportionally if an override exists.
-        const payload = {
-          productionId: order.id,
-          bomItems: order.bom.map(b => {
-            const effectiveQty = order.balanceQty < order.actualDispatchQty ? order.balanceQty : order.actualDispatchQty;
+        // Total oil quantity (Kg) being indented in this transaction
+      const totalOilQtyToIndent = ordersToSubmit.reduce((sum, o) => sum + o.balanceKg, 0);
+
+      const payload = {
+        productionId: order.id,
+        oilQty: totalOilQtyToIndent, // Passing the total oil weight covered by this indent
+        bomItems: order.bom.map(b => {
             const perUnit = parseFloat(b.rmqty?.replace(/,/g, '') || '0');
-            const defaultTotalReq = isNaN(perUnit) ? 0 : perUnit * effectiveQty;
+            const defaultTotalReq = isNaN(perUnit) ? 0 : perUnit * order.balanceQty;
 
-            // Compute local override ratio correctly against overall group requests.
-            const groupKey = `${order.productName}_${b.rmname}`;
-            const groupTotalRequested = ordersToSubmit.filter(i => i.productName === order.productName).reduce((ac, cu) => {
-                 const cuEffective = cu.balanceQty < cu.actualDispatchQty ? cu.balanceQty : cu.actualDispatchQty;
-                 const upu = parseFloat(cu.bom.find(cb => cb.rmname === b.rmname)?.rmqty?.replace(/,/g, '') || '0');
-                 return ac + (isNaN(upu) ? 0 : upu * cuEffective);
-            }, 0);
+            // Calculate final allocated by summing contributions from each SKU this order belongs to
+            let finalAllocated = 0;
+            let hasManualAllocation = false;
 
-            // Fetch explicit split manual override (Or fallback directly to standard requirement loop)
-            let finalAllocatedOut = defaultTotalReq;
-            if (bomAllocations[groupKey] !== undefined && groupTotalRequested > 0) {
-               // Assign percentage of the override linearly.
-               finalAllocatedOut = (defaultTotalReq / groupTotalRequested) * bomAllocations[groupKey];
-            }
+            const orderSkus = order.skuBoms || [];
+            orderSkus.forEach(os => {
+              const skuCount = orderSkus.length || 1;
+              const splitKg = order.balanceKg / skuCount;
+              
+              // Find total weight of this SKU across all selected orders in the group
+              const totalSkuKg = indents
+                .filter(i => selectedOrders.includes(i.id))
+                .reduce((sum, i) => {
+                  const match = (i.skuBoms || []).find(s => s.skuName === os.skuName);
+                  if (match) return sum + (i.balanceKg / (i.skuBoms?.length || 1));
+                  return sum;
+                }, 0);
+
+              const groupKey = `SKU_${os.skuName}_${b.rmname}`;
+              if (bomAllocations[groupKey] !== undefined) {
+                hasManualAllocation = true;
+                if (totalSkuKg > 0) {
+                  // This order's contribution from this SKU's manual allocation (proportional)
+                  finalAllocated += (splitKg / totalSkuKg) * bomAllocations[groupKey];
+                }
+              } else {
+                // If no manual allocation for this SKU, add its default requirement
+                finalAllocated += isNaN(perUnit) ? 0 : perUnit * splitKg;
+              }
+            });
+
+            // If absolutely no manual allocations were found for ANY SKU of this order for this RM, 
+            // fallback to the default total requirement (which should be the same as the sum of defaults)
+            if (!hasManualAllocation) finalAllocated = defaultTotalReq;
 
             return {
               itemName: b.rmname,
               qtyRequired: defaultTotalReq,
-              qtyAllocated: finalAllocatedOut
+              qtyAllocated: finalAllocated
             };
           })
         };
@@ -328,7 +375,7 @@ const PackingRawMaterialIndent = () => {
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Type of Oil</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Item(s) to be packed</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Actual Dispatch Qty</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Received Qty (Kg)</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Orders</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Status</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Action</th>
@@ -354,7 +401,7 @@ const PackingRawMaterialIndent = () => {
                         <Badge variant="outline" className="font-mono">{uniqueItemsPacked}</Badge>
                       </td>
                       <td className="px-4 py-3 text-base font-bold text-foreground font-mono">
-                        {formatNumber(group.totalActualDispatchQty)}
+                        {activeTab === 'pending' ? formatNumber(group.totalReceivedKg) : formatNumber(group.totalBalanceKg)} Kg
                       </td>
                       <td className="px-4 py-3 text-sm text-foreground">
                         {group.products.reduce((acc, curr) => acc + curr.orders.length, 0)} Orders
@@ -429,15 +476,15 @@ const PackingRawMaterialIndent = () => {
                         </div>
 
                         {/* Tank Details Summary (Inline with Item to be packed) */}
-                        <div className="grid grid-cols-4 gap-4 mt-2">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 border-b border-border bg-muted/10">
                           <div className="p-3 bg-blue-50/50 border border-blue-100/50 rounded-lg">
-                            <span className="text-xs text-blue-600/80 uppercase font-semibold">Total Actual Dispatch Qty:</span>
+                            <span className="text-xs text-blue-600/80 uppercase font-semibold">Total Received Qty (Kg):</span>
                             <p className="font-bold text-foreground text-sm">
-                              {formatNumber(group.totalActualDispatchKg)} Kg
+                              {formatNumber(group.totalReceivedKg)} Kg
                             </p>
                           </div>
                           <div className="p-3 bg-orange-50/50 border border-orange-200/50 rounded-lg">
-                            <span className="text-xs text-orange-600/80 uppercase font-semibold">Total Balance Qty:</span>
+                            <span className="text-xs text-orange-600/80 uppercase font-semibold">Total Balance Qty (Kg):</span>
                             <p className="font-bold text-foreground text-sm">
                               {formatNumber(group.totalBalanceKg)} Kg
                             </p>
@@ -457,10 +504,10 @@ const PackingRawMaterialIndent = () => {
                         </div>
                     </div>
 
-                    {/* Order Details — grouped by product, collapsible */}
+                    {/* Order Details — each order, each SKU individually */}
                     <div>
                       <div className="flex justify-between items-center mb-2">
-                        <h3 className="text-sm font-bold text-foreground">Order Details & BOM</h3>
+                        <h3 className="text-sm font-bold text-foreground">Order Details &amp; BOM</h3>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -470,123 +517,135 @@ const PackingRawMaterialIndent = () => {
                           {formDetailsExpanded ? 'Hide Details' : 'Show Details'}
                         </Button>
                       </div>
-                      
-                      {/* We extract the group expansion check to only wrap Orders, explicitly keeping the formDetailsExpanded away from BOM logic */}
+
                       <div className="space-y-4">
-                        {group.products.map((prod, pi) => {
-                          // Calculate combined values for this product block based on active checks
-                          const checkedProductOrders = prod.orders.filter(o => selectedOrders.includes(o.id));
-                          const combinedEffectiveQty = checkedProductOrders.reduce((acc, curr) => acc + (curr.balanceQty < curr.actualDispatchQty ? curr.balanceQty : curr.actualDispatchQty), 0);
+                        {(() => {
+                          // Flatten all SKUs across the group's products
+                          const skuMap: Record<string, { 
+                            skuName: string; 
+                            bom: any[]; 
+                            orders: Array<{ order: RawMaterialIndentItem, splitKg: number }>;
+                            totalSkuKg: number;
+                          }> = {};
 
-                          // Resolve the universal BOM for this product out of the first available order mapping.
-                          const productBOM = prod.orders[0]?.bom || [];
+                          group.products.forEach(prod => {
+                            const checkedOrders = prod.orders.filter(o => selectedOrders.includes(o.id));
+                            checkedOrders.forEach(order => {
+                              const skus = order.skuBoms || [];
+                              const skuCount = skus.length || 1;
+                              const splitKg = order.balanceKg / skuCount;
 
-                          return (
-                              <div key={pi} className="border border-border rounded-lg overflow-hidden flex flex-col">
-                                <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
-                                  <span className="text-sm font-semibold text-foreground">
-                                    {prod.productName}{prod.packingSize ? ' ' + prod.packingSize : ''}
-                                  </span>
-                                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                                      <span>Selected Qty: <strong>{formatNumber(combinedEffectiveQty)}</strong></span>
-                                      <span>({checkedProductOrders.length}/{prod.orders.length} orders)</span>
+                              skus.forEach(sb => {
+                                if (!skuMap[sb.skuName]) {
+                                  skuMap[sb.skuName] = { 
+                                    skuName: sb.skuName, 
+                                    bom: sb.bom, 
+                                    orders: [], 
+                                    totalSkuKg: 0 
+                                  };
+                                }
+                                skuMap[sb.skuName].orders.push({ order, splitKg });
+                                skuMap[sb.skuName].totalSkuKg += splitKg;
+                              });
+                            });
+                          });
+
+                          return Object.values(skuMap).map((skuGroup, si) => {
+                            const groupKeyPrefix = `SKU_${skuGroup.skuName}`;
+
+                            return (
+                              <div key={si} className="border border-border rounded-lg overflow-hidden bg-background shadow-sm">
+                                {/* SKU Header */}
+                                <div className="px-4 py-3 bg-primary/5 border-b border-border flex items-center justify-between">
+                                  <div>
+                                    <span className="text-sm font-bold text-primary">{skuGroup.skuName}</span>
+                                    <p className="text-[10px] text-muted-foreground uppercase mt-0.5">Individual SKU Section</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className="text-xs text-muted-foreground">Total Received: </span>
+                                    <span className="text-sm font-bold text-foreground">{formatNumber(skuGroup.totalSkuKg)} Kg</span>
                                   </div>
                                 </div>
-                                
-                                {/* Orders Inner Table (Collapsible) */}
+
+                                {/* Orders involved with this SKU (mini-table) */}
                                 {formDetailsExpanded && (
-                                  <table className="w-full text-sm border-b border-border">
-                                    <thead className="bg-muted/20 border-b border-border">
-                                      <tr>
-                                        <th className="px-3 py-2 text-left font-medium text-muted-foreground w-12">Select</th>
-                                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Order Ref</th>
-                                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Actual Dispatch Qty</th>
-                                        <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Actual Dispatch Qty (Kg)</th>
-                                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Packing Type</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-border bg-background">
-                                      {prod.orders.map((order, idx) => (
-                                        <tr key={idx} className="hover:bg-muted/30">
-                                          <td className="px-3 py-2">
-                                            <input
-                                              type="checkbox"
-                                              checked={selectedOrders.includes(order.id)}
-                                              onChange={() => handleOrderToggle(order.id)}
-                                              className="w-4 h-4 rounded border-primary text-primary"
-                                            />
-                                          </td>
-                                          <td className="px-3 py-2 font-mono text-xs">{order.orderRef}</td>
-                                          <td className="px-3 py-2 font-semibold text-primary">{formatNumber(order.balanceQty < order.actualDispatchQty ? order.balanceQty : order.actualDispatchQty)}</td>
-                                          <td className="px-3 py-2 border-l border-border/40 font-semibold text-orange-600/90">{formatNumber(order.actualDispatchKg)} Kg</td>
-                                          <td className="px-3 py-2 text-muted-foreground">{order.packingType || '-'}</td>
+                                  <div className="bg-muted/5 border-b border-border/40">
+                                    <table className="w-full text-[11px]">
+                                      <thead className="bg-muted/10 border-b border-border/20 text-muted-foreground">
+                                        <tr>
+                                          <th className="px-3 py-1 text-left font-medium">Order Ref</th>
+                                          <th className="px-3 py-1 text-right font-medium">Split Kg</th>
                                         </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
+                                      </thead>
+                                      <tbody className="divide-y divide-border/20">
+                                        {skuGroup.orders.map((oItem, oi) => (
+                                          <tr key={oi}>
+                                            <td className="px-3 py-1 font-mono">{oItem.order.orderRef}</td>
+                                            <td className="px-3 py-1 text-right font-semibold">{formatNumber(oItem.splitKg)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
                                 )}
 
-                                {/* Aggregated BOM Matrix directly underneath */}
-                                {productBOM.length > 0 && checkedProductOrders.length > 0 && (
-                                   <div className="p-3 bg-muted/10">
-                                      <div className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                                        Bill of Materials (Allocating {combinedEffectiveQty} total)
-                                      </div>
-                                      <div className="rounded border border-border/60 overflow-hidden bg-background">
-                                          <table className="w-full text-sm">
-                                            <thead className="bg-muted/20">
-                                              <tr>
-                                                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Raw Material</th>
-                                                <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Qty Per Unit</th>
-                                                <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Required Qty</th>
-                                                <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Allocate to Qty</th>
-                                                <th className="px-3 py-2 text-left font-medium text-muted-foreground w-20">Unit</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-border/40">
-                                              {productBOM.map((bItem, bIdx) => {
-                                                const perUnit = parseFloat(bItem.rmqty?.replace(/,/g, '') || '0');
-                                                const defaultTotalReq = isNaN(perUnit) ? 0 : perUnit * combinedEffectiveQty;
-                                                const groupKey = `${prod.productName}_${bItem.rmname}`;
-                                                
-                                                // Initialize missing values locally (Default 0 if undefined on very first scan, but we default sync the `bomAllocations` when creating the input payload mostly)
-                                                // Display the current override value, or perfectly proxy the calculated default.
-                                                const currentVal = bomAllocations[groupKey] !== undefined ? bomAllocations[groupKey] : defaultTotalReq;
-
-                                                return (
-                                                  <tr key={bIdx} className="hover:bg-muted/5">
-                                                    <td className="px-3 py-2 font-medium text-foreground">{bItem.rmname}</td>
-                                                    <td className="px-3 py-2 border-l border-border/40 font-mono text-muted-foreground">
-                                                       {isNaN(perUnit) ? '-' : formatNumber(perUnit)}
-                                                    </td>
-                                                    <td className="px-3 py-2 border-l border-border/40 font-mono text-muted-foreground">
-                                                       {isNaN(perUnit) ? '-' : formatNumber(defaultTotalReq)}
-                                                    </td>
-                                                    <td className="px-3 py-2 border-l border-border/40 bg-blue-50/30">
-                                                       <input 
-                                                          type="number" 
-                                                          value={currentVal || ''}
-                                                          onChange={(e) => {
-                                                             let numeric = parseFloat(e.target.value);
-                                                             if(isNaN(numeric) || numeric < 0) numeric = 0;
-                                                             setBomAllocations(prev => ({ ...prev, [groupKey]: numeric }));
-                                                          }}
-                                                          className="w-full px-2 py-1 text-sm border border-border/60 rounded bg-background font-mono shadow-inner outline-none focus:border-primary transition-colors"
-                                                       />
-                                                    </td>
-                                                    <td className="px-3 py-2 text-xs text-muted-foreground">{bItem.rmunit}</td>
-                                                  </tr>
-                                                );
-                                              })}
-                                            </tbody>
-                                          </table>
-                                      </div>
-                                   </div>
-                                )}
+                                {/* BOM Table or No BOM Message */}
+                                <div className="p-0">
+                                  {!skuGroup.bom || skuGroup.bom.length === 0 ? (
+                                    <div className="p-4 text-center text-xs text-orange-600 bg-orange-50/30 font-medium">
+                                      ⚠️ No Bill of Materials (BOM) items found for this SKU.
+                                    </div>
+                                  ) : (
+                                    <table className="w-full text-sm">
+                                      <thead className="bg-muted/20">
+                                        <tr>
+                                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Raw Material</th>
+                                          <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Qty Per Unit</th>
+                                          <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Required Qty</th>
+                                          <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Allocate Qty</th>
+                                          <th className="px-3 py-2 text-left font-medium text-muted-foreground w-20">Unit</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-border/40">
+                                        {skuGroup.bom.map((bItem: any, bIdx: number) => {
+                                          const perUnit = parseFloat(bItem.rmqty?.replace(/,/g, '') || '0');
+                                          const defaultTotalReq = isNaN(perUnit) ? 0 : perUnit * skuGroup.totalSkuKg;
+                                          const groupKey = `${groupKeyPrefix}_${bItem.rmname}`;
+                                          const currentVal = bomAllocations[groupKey] !== undefined ? bomAllocations[groupKey] : defaultTotalReq;
+                                          return (
+                                            <tr key={bIdx} className="hover:bg-muted/5 transition-colors">
+                                              <td className="px-3 py-2 font-medium text-foreground">{bItem.rmname}</td>
+                                              <td className="px-3 py-2 border-l border-border/40 font-mono text-muted-foreground text-xs">
+                                                {isNaN(perUnit) ? '-' : formatNumber(perUnit)}
+                                              </td>
+                                              <td className="px-3 py-2 border-l border-border/40 font-mono text-muted-foreground text-xs">
+                                                {isNaN(perUnit) ? '-' : formatNumber(defaultTotalReq)}
+                                              </td>
+                                              <td className="px-3 py-2 border-l border-border/40 bg-blue-50/20">
+                                                <input
+                                                  type="number"
+                                                  value={currentVal || ''}
+                                                  onChange={(e) => {
+                                                    let numeric = parseFloat(e.target.value);
+                                                    if (isNaN(numeric) || numeric < 0) numeric = 0;
+                                                    setBomAllocations(prev => ({ ...prev, [groupKey]: numeric }));
+                                                  }}
+                                                  className="w-full px-2 py-1 text-sm border border-border/40 rounded bg-background font-mono shadow-inner outline-none focus:border-primary transition-all"
+                                                />
+                                              </td>
+                                              <td className="px-3 py-2 text-xs text-muted-foreground">{bItem.rmunit}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                </div>
                               </div>
                             );
-                          })}
-                        </div>
+                          });
+                        })()}
+                      </div>
                     </div>
                   </>
                 );

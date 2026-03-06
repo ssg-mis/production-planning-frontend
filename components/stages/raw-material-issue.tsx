@@ -13,11 +13,13 @@ import TableSkeleton from '@/components/table-skeleton';
 
 interface RawMaterialIssueItem {
   id: string; // production_id
+  packingIndentId?: number;
   productName: string;
   packingSize: string;
   packingType: string;
   partyName: string;
-  plannedQty: number;
+  plannedQty: number; // This will show oilQty
+  oilQty: number;
   totalWeightKg: number;
   tankNo: string;
   givenTankNo: string;
@@ -111,11 +113,13 @@ const RawMaterialIssue = () => {
           if (activeTab === 'history') {
              return {
                 id: item.production_id,
+                packingIndentId: item.indent_id,
                 productName: item.indentDetails?.product_name || 'N/A',
                 packingSize: item.indentDetails?.packing_size || '',
                 packingType: item.indentDetails?.packing_type || '',
                 partyName: item.indentDetails?.party_name || 'N/A',
-                plannedQty: Number(item.indentDetails?.indent_quantity || 0),
+                plannedQty: Number(item.oil_qty || 0),
+                oilQty: Number(item.oil_qty || 0),
                 totalWeightKg: Number(item.indentDetails?.total_weight_kg || 0),
                 tankNo: item.indentDetails?.tank_no || '-',
                 givenTankNo: item.indentDetails?.given_from_tank_no || '-',
@@ -125,11 +129,13 @@ const RawMaterialIssue = () => {
           }
           return {
             id: item.production_id,
+            packingIndentId: item.packing_indent_id || item.id,
             productName: item.product_name,
             packingSize: item.packing_size || '',
             packingType: item.packing_type || '',
             partyName: item.party_name,
-            plannedQty: Number(item.indent_quantity || 0),
+            plannedQty: Number(item.oil_qty || 0), // Use oil_qty as plannedQty for display
+            oilQty: Number(item.oil_qty || 0),
             totalWeightKg: Number(item.total_weight_kg || 0),
             tankNo: item.tank_no || '-',
             givenTankNo: item.given_from_tank_no || '-',
@@ -193,13 +199,18 @@ const RawMaterialIssue = () => {
 
     try {
       for (const productionId of selectedItems) {
+        const item = issues.find(i => (i.id === productionId || String(i.packingIndentId) === productionId));
+        if (!item) continue;
+
         const response = await fetch(`${API_BASE_URL}/raw-material-issue`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            productionId,
+            productionId: item.id,
+            indentId: item.packingIndentId,
+            oilQty: item.oilQty,
             remarks,
-            issuedBy: 'Packing Head' // Hardcoded for now
+            issuedBy: 'Packing Head'
           })
         });
 

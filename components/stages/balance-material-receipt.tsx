@@ -45,6 +45,7 @@ const BalanceMaterialReceipt = () => {
     try {
       const payload = {
         productionId: selectedEntry.production_id,
+        entryId: selectedEntry.entry_id,
         receivedBy: 'Store Head',
         remarks,
         materialReceipts: selectedEntry.varianceItems.map((item: any) => ({
@@ -133,7 +134,7 @@ const BalanceMaterialReceipt = () => {
                 <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Production ID</th>
                 <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Name</th>
                 <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Party Name</th>
-                <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Produced Qty</th>
+                <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Produced Qty (KG)</th>
                 <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Status</th>
                 {activeTab === 'pending' && <th className="px-4 py-3 text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Action</th>}
               </tr>
@@ -152,7 +153,7 @@ const BalanceMaterialReceipt = () => {
                     {item.productName} {item.packingSize && <span className="text-muted-foreground">({item.packingSize})</span>}
                   </td>
                   <td className="px-4 py-3 text-sm text-foreground">{item.partyName || '-'}</td>
-                  <td className="px-4 py-3 text-sm font-semibold">{formatNumber(item.actual_qty)}</td>
+                  <td className="px-4 py-3 text-sm font-semibold">{formatNumber(item.actual_qty)} KG</td>
                   <td className="px-4 py-3">
                     <Badge className={getStatusColor(item.status || 'Pending')}>{item.status || 'Pending'}</Badge>
                   </td>

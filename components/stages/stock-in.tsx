@@ -44,7 +44,7 @@ const StockIn = () => {
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(items.map(item => item.production_id));
+      setSelectedIds(items.map(item => String(item.id || item.production_id)));
     } else {
       setSelectedIds([]);
     }
@@ -55,12 +55,13 @@ const StockIn = () => {
 
     setProcessing(true);
     try {
-      const selectedItems = items.filter(item => selectedIds.includes(item.production_id));
+      const selectedItems = items.filter(item => selectedIds.includes(String(item.id || item.production_id)));
       const payload = {
         items: selectedItems.map(item => ({
           productionId: item.production_id,
-          finishedQty: item.actual_qty,
-          acceptedQty: item.actual_qty, // Assuming full acceptance by default
+          entryId: item.entry_id || item.id,
+          finishedQty: item.remaining_qty || item.actual_qty || item.finished_qty,
+          acceptedQty: item.remaining_qty || item.actual_qty || item.accepted_qty,
           receivedBy: 'Packing Head',
           remarks: 'Accepted to warehouse stock'
         }))
@@ -85,6 +86,7 @@ const StockIn = () => {
   };
 
   const getStatusColor = (status: string) => {
+    if (!status) return 'bg-gray-100 text-gray-800';
     switch (status.toLowerCase()) {
       case 'pending':
         return 'bg-yellow-100 text-yellow-800';
@@ -160,7 +162,7 @@ const StockIn = () => {
                 <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Production ID</th>
                 <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Name</th>
                 <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Party Name</th>
-                <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Produced Qty</th>
+                <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Produced Qty (KG)</th>
                 <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">Status</th>
               </tr>
             </thead>
@@ -174,29 +176,39 @@ const StockIn = () => {
                       No {activeTab} stock items found
                     </td>
                   </tr>
-                ) : items.map((item) => (
-                  <tr key={item.production_id} className="hover:bg-muted/30 transition-colors">
-                    {activeTab === 'pending' && (
-                      <td className="px-4 py-3">
-                        <input 
-                          type="checkbox" 
-                          checked={selectedIds.includes(item.production_id)}
-                          onChange={() => handleToggleSelect(item.production_id)}
-                          className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                        />
+                ) : items.map((item) => {
+                  const itemId = String(item.id || item.production_id);
+                  return (
+                    <tr key={itemId} className="hover:bg-muted/30 transition-colors">
+                      {activeTab === 'pending' && (
+                        <td className="px-4 py-3">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedIds.includes(itemId)}
+                            onChange={() => handleToggleSelect(itemId)}
+                            className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                          />
+                        </td>
+                      )}
+                      <td className="px-4 py-3 text-sm font-mono font-bold text-primary">{item.production_id}</td>
+                      <td className="px-4 py-3 text-sm font-medium">
+                        {item.productName} {item.packingSize && <span className="text-muted-foreground ml-1">({item.packingSize})</span>}
                       </td>
-                    )}
-                    <td className="px-4 py-3 text-sm font-mono font-bold text-primary">{item.production_id}</td>
-                    <td className="px-4 py-3 text-sm font-medium">
-                      {item.productName} {item.packingSize && <span className="text-muted-foreground ml-1">({item.packingSize})</span>}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-foreground">{item.partyName || '-'}</td>
-                    <td className="px-4 py-3 text-sm font-semibold">{formatNumber(item.actual_qty || item.finished_qty)}</td>
-                    <td className="px-4 py-3">
-                      <Badge className={getStatusColor(item.status)}>{item.status}</Badge>
-                    </td>
-                  </tr>
-                ))}
+                      <td className="px-4 py-3 text-sm text-foreground">{item.partyName || '-'}</td>
+                      <td className="px-4 py-3 text-sm font-semibold">
+                         <div className="flex flex-col">
+                            <span>{formatNumber(item.remaining_qty || item.actual_qty || item.accepted_qty || item.finished_qty)} KG</span>
+                            {activeTab === 'pending' && item.total_produced_qty > (item.remaining_qty || 0) && (
+                                <span className="text-[10px] text-muted-foreground">Total Pro: {formatNumber(item.total_produced_qty)} KG</span>
+                            )}
+                         </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge className={getStatusColor(item.status)}>{item.status || 'Pending'}</Badge>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             )}
           </table>

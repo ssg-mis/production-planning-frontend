@@ -312,8 +312,9 @@ const LabConfirmation = () => {
     if (group) {
       const allItems = group.products.flatMap(p => p.items);
       setSelectedItems(allItems.map(i => i.id));
-      const totalKg = allItems.reduce((s, i) => s + (i.totalWeightKg || 0), 0);
-      setFormData(prev => ({ ...prev, approvedQuantity: totalKg.toString() }));
+      // Use approvedQty from the approval stage (not indent weight)
+      const totalApproved = allItems.reduce((s, i) => s + (i.approvedQty || i.indentQuantity || 0), 0);
+      setFormData(prev => ({ ...prev, approvedQuantity: totalApproved.toString() }));
     }
   };
 
@@ -323,10 +324,11 @@ const LabConfirmation = () => {
       : [...selectedItems, itemId];
     setSelectedItems(newSelected);
 
-    const totalKg = confirmations
+    // Sum approved qty from the approval stage for selected items
+    const totalApproved = confirmations
       .filter(c => newSelected.includes(c.id))
-      .reduce((s, c) => s + (c.totalWeightKg || 0), 0);
-    setFormData(prev => ({ ...prev, approvedQuantity: totalKg.toString() }));
+      .reduce((s, c) => s + (c.approvedQty || c.indentQuantity || 0), 0);
+    setFormData(prev => ({ ...prev, approvedQuantity: totalApproved.toString() }));
   };
 
 
@@ -359,6 +361,7 @@ const LabConfirmation = () => {
           remarks: formData.remarks,
           testParams: {
             approvedQuantity: formData.approvedQuantity,
+            issuedQuantity: formData.approvedQuantity, // save approved qty as issued qty
             giveFromTankNo: formData.giveFromTankNo,
             qaStatus: 'Pass', // default to Pass if approving
             additives: additivesData,
@@ -659,16 +662,12 @@ const LabConfirmation = () => {
                       </div>
                     )}
 
-                    {/* Approved Quantity */}
+                    {/* Approved Quantity — from approval stage */}
                     <div className="mb-6">
-                      <label className="block text-sm font-medium text-foreground mb-2">Approved Quantity (Kg)</label>
-                      <input
-                        type="number"
-                        value={formData.approvedQuantity}
-                        onChange={e => setFormData({ ...formData, approvedQuantity: e.target.value })}
-                        disabled
-                        className="w-full px-3 py-2 border border-border rounded-lg bg-background font-bold text-primary opacity-70 cursor-not-allowed"
-                      />
+                      <label className="block text-sm font-medium text-foreground mb-2">Approved Quantity (Kg) <span className="text-xs text-muted-foreground">(from Indent Approval stage)</span></label>
+                      <p className="w-full px-3 py-2 border border-border rounded-lg bg-muted/20 font-bold text-primary text-lg">
+                        {formData.approvedQuantity ? formatNumber(parseFloat(formData.approvedQuantity)) : '-'} Kg
+                      </p>
                     </div>
 
                     {/* Remarks */}

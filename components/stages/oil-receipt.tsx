@@ -283,7 +283,8 @@ const OilReceipt = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             productionId: prodId,
-            receivedQty: item.indentDetails.indent_quantity,
+            // Use the actual dispatched qty from previous stage; fallback to approved_qty then indent_quantity
+            receivedQty: item.indentDetails.actual_qty_kg || item.indentDetails.approved_qty || item.indentDetails.indent_quantity,
             receivedBy: formData.receivedBy,
             receivedDate: formData.receivedDate,
             remarks: formData.remarks,
@@ -539,14 +540,31 @@ const OilReceipt = () => {
                       )}
                     </div>
 
-                    {/* Tank Details Summary */}
-                    <div className="mb-6 grid grid-cols-2 gap-4">
-                      <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
-                        <span className="text-xs text-blue-600 uppercase font-semibold">Receive Tank No:</span>
-                        <p className="font-bold text-foreground">
-                          {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.tank_no)).filter(v => v && v !== '-'))).join(', ') || 'N/A'}
-                        </p>
-                      </div>
+                    {/* Dispatch Qty Summary card */}
+                    {(() => {
+                      const totalDispatchQty = group.products
+                        .flatMap(p => p.items)
+                        .filter(i => selectedProductionIds.includes(i.production_id))
+                        .reduce((sum, i) => sum + (i.indentDetails.actual_qty_kg || i.indentDetails.approved_qty || i.indentDetails.indent_quantity || 0), 0);
+                      return (
+                        <div className="mb-6 grid grid-cols-2 gap-4">
+                          <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
+                            <span className="text-xs font-semibold text-primary uppercase tracking-wider">Total Dispatch Qty (Kg)</span>
+                            <p className="text-xl font-bold text-primary mt-1">{formatNumber(totalDispatchQty)}</p>
+                            <p className="text-xs text-muted-foreground mt-1">(from Actual Dispatch stage)</p>
+                          </div>
+                          <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex flex-col justify-center">
+                            <span className="text-xs text-blue-600 uppercase font-semibold">Receive Tank No:</span>
+                            <p className="font-bold text-foreground">
+                              {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.tank_no)).filter(v => v && v !== '-'))).join(', ') || 'N/A'}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Give Tank No */}
+                    <div className="mb-6">
                       <div className="p-3 bg-green-50 border border-green-100 rounded-lg">
                         <span className="text-xs text-green-600 uppercase font-semibold">Give Tank No:</span>
                         <p className="font-bold text-foreground">

@@ -104,6 +104,7 @@ const OilIndentApproval = () => {
   const [selectedProduct, setSelectedProduct] = useState<string>('');
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [editedQuantities, setEditedQuantities] = useState<Record<string, number>>({});
+  const [approvedQtyInput, setApprovedQtyInput] = useState<string>(''); // free-text state for the approved qty field
   const [formDetailsExpanded, setFormDetailsExpanded] = useState(true);
   const [formData, setFormData] = useState({ 
     action: 'approve', 
@@ -235,8 +236,11 @@ const OilIndentApproval = () => {
       const allItems = group.products.flatMap(p => p.items);
       setSelectedItems(allItems.map(i => i.id));
       const quantities: Record<string, number> = {};
-      allItems.forEach(i => { quantities[i.id] = i.totalWeightKg; }); // Use weight in Kg by default
+      allItems.forEach(i => { quantities[i.id] = i.indentQuantity; });
       setEditedQuantities(quantities);
+      // Pre-fill the text input with the total indent
+      const total = allItems.reduce((s, i) => s + i.indentQuantity, 0);
+      setApprovedQtyInput(String(total));
     }
   };
 
@@ -258,7 +262,7 @@ const OilIndentApproval = () => {
 
         const body = {
           productionId,
-          approvedWeightKg: editedQuantities[productionId] || item.totalWeightKg,
+          approvedWeightKg: editedQuantities[productionId] ?? item.indentQuantity,
           status: formData.action === 'approve' ? 'Confirmed' : 'Rejected',
           remarks: formData.remarks,
           givenFromTankNo: formData.givenFromTankNo,
@@ -356,7 +360,7 @@ const OilIndentApproval = () => {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-base font-bold text-foreground">
-                        {formatNumber(group.totalWeightKg)}
+                        {formatNumber(group.totalQuantity)}
                       </td>
                       <td className="px-4 py-3 text-sm text-muted-foreground">-</td>
                       <td className="px-4 py-3 text-sm">
@@ -402,7 +406,7 @@ const OilIndentApproval = () => {
                               </span>
                             </td>
                             <td className="px-4 py-3 text-sm font-semibold text-foreground">
-                              {formatNumber(product.totalWeightKg)}
+                              {formatNumber(product.totalQuantity)}
                             </td>
                             <td className="px-4 py-3 text-sm text-foreground">
                               {product.availableStock}
@@ -441,7 +445,7 @@ const OilIndentApproval = () => {
                                             {order.createdAt ? new Date(order.createdAt).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
                                           </td>
                                           <td className="px-3 py-2 font-mono text-xs">{order.id}</td>
-                                          <td className="px-3 py-2 font-semibold text-primary">{formatNumber(order.totalWeightKg)}</td>
+                                          <td className="px-3 py-2 font-semibold text-primary">{formatNumber(order.indentQuantity)}</td>
                                           <td className="px-3 py-2">{order.packingType}</td>
                                           <td className="px-3 py-2">
                                             {order.tankNo ? (
@@ -502,13 +506,17 @@ const OilIndentApproval = () => {
                 const group = oilTypeGroups.find(g => g.type === selectedProduct);
                 if (!group) return null;
 
-                const totalSelectedQty = selectedItems.reduce((s, id) => {
+                const originalIndentTotal = selectedItems.reduce((s, id) => {
                   const item = group.products.flatMap(p => p.items).find(i => i.id === id);
-                  return s + (editedQuantities[id] ?? item?.totalWeightKg ?? 0);
+                  return s + (item?.indentQuantity ?? 0);
                 }, 0);
+
+                const totalApprovedWeight = selectedItems.reduce((s, id) => {
+                  const item = group.products.flatMap(p => p.items).find(i => i.id === id);
+                  return s + (editedQuantities[id] ?? item?.indentQuantity ?? 0);
+                }, 0);
+
                 const totalAvailableStock = group.products.reduce((s, p) => s + p.availableStock, 0);
-                const totalShortage = Math.max(0, totalSelectedQty - totalAvailableStock);
-                const totalApprovedWeight = totalSelectedQty;
 
                 return (
                   <>
@@ -520,7 +528,7 @@ const OilIndentApproval = () => {
                         </div>
                         <div>
                           <span className="text-xs text-muted-foreground uppercase font-semibold">Total Indent:</span>
-                          <p className="font-bold text-lg text-primary">{formatNumber(totalSelectedQty)} Kg</p>
+                          <p className="font-bold text-lg text-primary">{formatNumber(originalIndentTotal)} Kg</p>
                         </div>
                         <div>
                             <span className="text-xs text-muted-foreground uppercase font-semibold">Receive Tank No:</span>
@@ -606,8 +614,15 @@ const OilIndentApproval = () => {
                                     <td className="px-3 py-2">
                                       <input
                                         type="number"
-                                        value={editedQuantities[item.id] ?? item.totalWeightKg}
-                                        onChange={e => setEditedQuantities(prev => ({ ...prev, [item.id]: Number(e.target.value) }))}
+                                        value={editedQuantities[item.id] ?? item.indentQuantity}
+                                        onChange={e => {
+                                          const val = Number(e.target.value);
+                                          if (val > item.indentQuantity) {
+                                            alert(`Approved quantity cannot exceed indent quantity (${item.indentQuantity} Kg)`);
+                                            return;
+                                          }
+                                          setEditedQuantities(prev => ({ ...prev, [item.id]: val }));
+                                        }}
                                         className="w-28 px-3 py-1.5 border border-primary/30 rounded bg-background text-foreground font-bold text-sm focus:border-primary outline-none transition-all"
                                         min="0"
                                       />
@@ -650,37 +665,68 @@ const OilIndentApproval = () => {
                         </div>
                     </div>
 
-                    {/* Total Approved Summary - Now an Input Box */}
-                    <div className="mb-6 p-4 bg-primary/5 rounded-lg border border-primary/20 flex items-center justify-between gap-4">
-                        <label className="text-sm font-bold text-primary uppercase whitespace-nowrap">Total Approved Qty (Kg)</label>
-                        <div className="relative flex-1 max-w-50">
-                            <input
-                                type="number"
-                                value={totalApprovedWeight}
-                                onChange={(e) => {
-                                    const newTotal = Number(e.target.value);
-                                    // Handle distributing the total back to items if needed, 
-                                    // or just update a master total state. 
-                                    // For now, let's just update the editedQuantities of the first item 
-                                    // as a simple way to keep things in sync for submission.
-                                    if (selectedItems.length > 0) {
-                                        const firstId = selectedItems[0];
-                                        const currentSumWithoutFirst = selectedItems.slice(1).reduce((s, id) => {
-                                            const item = group.products.flatMap(p => p.items).find(i => i.id === id);
-                                            return s + (editedQuantities[id] ?? item?.totalWeightKg ?? 0);
-                                        }, 0);
-                                        setEditedQuantities(prev => ({
-                                            ...prev,
-                                            [firstId]: Math.max(0, newTotal - currentSumWithoutFirst)
-                                        }));
-                                    }
-                                }}
-                                className="w-full px-4 py-2 text-xl font-black text-primary bg-background border-2 border-primary/30 rounded-lg focus:border-primary outline-none text-right"
-                            />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-primary font-bold hidden">Kg</span>
-                        </div>
-                    </div>
+                    {/* Total Approved Summary — 3 cards */}
+                    {(() => {
+                      // Calculate already-approved qty for this oil type (from approvals in 'history' that match)
+                      // We don't have history here, so we compute remaining as: indentTotal - totalApproved
+                      const typedApproval = parseFloat(approvedQtyInput) || 0;
+                      const remainingApprovalQty = Math.max(0, originalIndentTotal - typedApproval);
+                      return (
+                        <div className="mb-6 grid grid-cols-3 gap-4">
+                          {/* Card 1: Total Indent */}
+                          <div className="p-4 bg-muted/30 rounded-lg border border-border flex flex-col justify-center">
+                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Total Indent Qty</span>
+                            <p className="text-xl font-bold text-primary">{formatNumber(originalIndentTotal)} Kg</p>
+                          </div>
 
+                          {/* Card 2: Remaining */}
+                          <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-300 flex flex-col justify-center">
+                            <span className="text-xs font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wider mb-1">Remaining Approval Qty</span>
+                            <p className="text-xl font-bold text-yellow-600 dark:text-yellow-400">{formatNumber(remainingApprovalQty)} Kg</p>
+                          </div>
+
+                          {/* Card 3: Approved (editable) */}
+                          <div className="p-4 bg-primary/5 rounded-lg border border-primary/20 flex flex-col justify-center">
+                            <span className="text-xs font-bold text-primary uppercase tracking-wider mb-1">Total Approved Qty (Kg)</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={approvedQtyInput}
+                              onChange={(e) => {
+                                // Let user type freely — just update local display state
+                                setApprovedQtyInput(e.target.value);
+                              }}
+                              onBlur={(e) => {
+                                const newTotal = parseFloat(e.target.value) || 0;
+                                if (newTotal > originalIndentTotal) {
+                                  alert(`Total approved qty cannot exceed total indent qty (${originalIndentTotal} Kg)`);
+                                  setApprovedQtyInput(String(totalApprovedWeight));
+                                  return;
+                                }
+                                // Distribute the typed total to the first selected item
+                                if (selectedItems.length > 0) {
+                                  const firstId = selectedItems[0];
+                                  const currentSumWithoutFirst = selectedItems.slice(1).reduce((s, id) => {
+                                    const it = group.products.flatMap(p => p.items).find(i => i.id === id);
+                                    return s + (editedQuantities[id] ?? it?.indentQuantity ?? 0);
+                                  }, 0);
+                                  const firstItem = group.products.flatMap(p => p.items).find(i => i.id === firstId);
+                                  const remainingForFirst = newTotal - currentSumWithoutFirst;
+                                  if (firstItem && remainingForFirst > firstItem.indentQuantity) {
+                                    alert('Cannot distribute total quantity without exceeding individual item indent limits.');
+                                    setApprovedQtyInput(String(totalApprovedWeight));
+                                    return;
+                                  }
+                                  setEditedQuantities(prev => ({ ...prev, [firstId]: Math.max(0, remainingForFirst) }));
+                                }
+                              }}
+                              className="w-full px-3 py-2 text-xl font-black text-primary bg-background border-2 border-primary/30 rounded-lg focus:border-primary outline-none text-right mt-1"
+                              placeholder="Enter qty"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
 
 
                     {/* Remarks */}

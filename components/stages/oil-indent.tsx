@@ -101,6 +101,7 @@ const OilIndent = () => {
     indentQuantity: 0,
     totalWeightKg: 0,
     requiredQtyKg: 0,
+    remainingQtyKg: 0,
     tankNo: '',
   });
 
@@ -329,12 +330,23 @@ const OilIndent = () => {
 
     const totalQty = selectedItems.reduce((sum, i) => sum + (i.oilRequired || 0), 0);
     const totalKg = selectedItems.reduce((sum, i) => sum + (i.totalWeightKg || 0), 0);
+
+    // Calculate already-submitted qty for this oil type (from history tab indents)
+    const alreadySubmittedKg = indents
+      .filter(i =>
+        i.status !== 'Pending' &&
+        categorizeOilType(normalizeProductKey(i.productName, i.packingSize)) === oilType
+      )
+      .reduce((sum, i) => sum + (i.indentQuantity || i.oilRequired || 0), 0);
+
+    const remainingKg = Math.max(0, totalKg - alreadySubmittedKg);
     
     setFormData({
       selectedOil: oilType,
       indentQuantity: totalQty,
       totalWeightKg: totalKg,
-      requiredQtyKg: totalKg,
+      requiredQtyKg: remainingKg,
+      remainingQtyKg: remainingKg,
       tankNo: '',
     });
   };
@@ -367,52 +379,104 @@ const OilIndent = () => {
       return;
     }
 
+    if (!formData.tankNo) {
+      alert('Please select a Receive Tank No.');
+      return;
+    }
+
     try {
-      const selectedIndents = indents.filter(indent =>
+      const selectedIndentsRecords = indents.filter(indent =>
         categorizeOilType(normalizeProductKey(indent.productName, indent.packingSize)) === selectedProduct &&
         selectedParties.includes(indent.partyName || '') &&
         indent.status === 'Pending'
       );
 
-      const submissions = selectedIndents.map(async (indent) => {
-        const response = await fetch(`${API_BASE_URL}/production-indent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            orderId: indent.orderRef,
-            productName: indent.productName,
-            packingSize: indent.packingSize,
-            packingType: indent.packingType,
-            partyName: indent.partyName,
-            oilRequired: indent.oilRequired,
-            selectedOil: formData.selectedOil,
-            indentQuantity: indent.oilRequired,
-            tankNo: formData.tankNo,
-            totalWeightKg: indent.totalWeightKg, // Added total weight to submission
-            requiredQtyKg: formData.requiredQtyKg
-          }),
-        });
-        if (!response.ok) throw new Error(`Failed to submit indent for ${indent.partyName}`);
-        return await response.json();
+      if (selectedIndentsRecords.length === 0) {
+        alert('No pending indents found for the selected criteria');
+        return;
+      }
+
+      const aggregatedData = {
+        orderId: Array.from(new Set(selectedIndentsRecords.map(i => i.orderRef))).filter(Boolean).join(', '),
+        productName: Array.from(new Set(selectedIndentsRecords.map(i => i.productName))).filter(Boolean).join(', '),
+        packingSize: Array.from(new Set(selectedIndentsRecords.map(i => i.packingSize))).filter(Boolean).join(', ') || null,
+        packingType: Array.from(new Set(selectedIndentsRecords.map(i => i.packingType))).filter(Boolean).join(', ') || 'Tin',
+        partyName: Array.from(new Set(selectedIndentsRecords.map(i => i.partyName))).filter(Boolean).join(', '),
+        oilRequired: selectedIndentsRecords.reduce((sum, i) => sum + (i.oilRequired || 0), 0),
+        selectedOil: formData.selectedOil,
+        indentQuantity: formData.requiredQtyKg,
+        tankNo: formData.tankNo,
+        totalWeightKg: formData.totalWeightKg,
+        requiredQtyKg: formData.requiredQtyKg
+      };
+
+      const response = await fetch(`${API_BASE_URL}/production-indent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(aggregatedData),
       });
 
-      const results = await Promise.all(submissions);
-      const productionIds = results.map(r => r.data.productionId).join(', ');
-      alert(`✅ Production indents created successfully!\nProduction IDs: ${productionIds}`);
+      if (!response.ok) throw new Error(`Failed to submit aggregated indent`);
+      
+      const result = await response.json();
+      const productionId = result.data.production_id || result.data.productionId || 'Created';
+      
+      alert(`✅ Production indent created successfully!\nProduction ID: ${productionId}\nQuantity: ${formData.requiredQtyKg} Kg`);
 
-      // Update local state by removing submitted items or moving them to history
-      // Ideally re-fetch or optimistically update.
-      setIndents(prev => prev.map(i => {
-         if (categorizeOilType(normalizeProductKey(i.productName, i.packingSize)) === selectedProduct && selectedParties.includes(i.partyName || '')) {
-             return { ...i, status: 'Approved' };
-         }
-         return i;
-      }));
-
+      // Close form and reset, then re-fetch fresh data from server
+      // (do NOT optimistically remove items — the source orders still exist as Pending)
       setShowIndentForm(false);
       setSelectedProduct('');
       setSelectedParties([]);
-      setFormData({ selectedOil: '', indentQuantity: 0, totalWeightKg: 0, requiredQtyKg: 0, tankNo: '' });
+      setFormData({ selectedOil: '', indentQuantity: 0, totalWeightKg: 0, requiredQtyKg: 0, remainingQtyKg: 0, tankNo: '' });
+
+      // Re-fetch so the remaining qty is recalculated correctly
+      const pendingRes = await fetch(`${API_BASE_URL}/oil-indent/pending`);
+      const historyRes = await fetch(`${API_BASE_URL}/production-indent`);
+      if (pendingRes.ok && historyRes.ok) {
+        const pendingResult = await pendingRes.json();
+        const historyResult = await historyRes.json();
+        const pendingData = (pendingResult.data || pendingResult) as any[];
+        const historyData = (historyResult.data || historyResult) as any[];
+
+        const transformedPending: ExtendedOilIndentItem[] = pendingData.map((item: any, index: number) => {
+          const qty = parseFloat(item.quantity || '0');
+          const packingWeight = parseFloat(item.packingWeight || '0');
+          return {
+            id: item.orderNo || `indent-${index}`,
+            orderRef: item.orderNo || `SO-${index}`,
+            productName: item.productName || 'Unknown Product',
+            packingSize: '',
+            packingType: item.transportType === 'self' ? 'Tin' : 'Tin',
+            partyName: item.partyName || 'Unknown Party',
+            oilRequired: qty,
+            packingWeight,
+            totalWeightKg: qty * packingWeight,
+            selectedOil: '',
+            indentQuantity: 0,
+            createdAt: item.plannedDate || new Date().toISOString(),
+            status: 'Pending',
+          };
+        });
+
+        const transformedHistory: ExtendedOilIndentItem[] = historyData.map((item: any) => ({
+          id: item.productionId || item.id,
+          orderRef: item.orderId || '-',
+          productName: item.productName,
+          packingSize: item.packingSize,
+          packingType: item.packingType,
+          partyName: item.partyName,
+          oilRequired: item.indentQuantity || item.oilRequired || 0,
+          selectedOil: item.selectedOil,
+          indentQuantity: item.indentQuantity || 0,
+          createdAt: item.createdAt,
+          status: 'Approved' as const,
+          packingWeight: 0,
+          totalWeightKg: 0,
+        }));
+
+        setIndents([...transformedPending, ...transformedHistory]);
+      }
     } catch (error) {
       console.error('Error submitting production indent:', error);
       alert(`❌ Error submitting production indent: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -471,7 +535,12 @@ const OilIndent = () => {
                         <td className="px-4 py-3 text-base text-foreground font-bold">{formatNumber(group.totalWeightKg)}</td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">-</td>
                         <td className={`px-4 py-3 text-base font-bold ${group.totalWeightKg > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatNumber(group.totalWeightKg)}</td>
-                        <td className="px-4 py-3 text-sm"><Badge variant="outline">Pending</Badge></td>
+                        <td className="px-4 py-3 text-sm">
+                          {group.products.some(p => p.indentQuantity < p.totalWeightKg)
+                            ? <Badge variant="outline" className="text-yellow-600 border-yellow-400">Pending</Badge>
+                            : <Badge variant="outline" className="text-green-600 border-green-400">Submitted</Badge>
+                          }
+                        </td>
                         <td className="px-4 py-3 text-sm">
                           {activeTab === 'pending' && (
                             <Button 
@@ -651,11 +720,17 @@ const OilIndent = () => {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 mb-6">
+                    <div className="grid grid-cols-3 gap-4 mb-6">
                       <div className="p-4 bg-muted/30 rounded-lg border border-border flex flex-col justify-center">
                         <span className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">Total Indent Qty</span>
                         <div className="text-xl font-bold text-primary">
                           {formatNumber(formData.totalWeightKg)} Kg
+                        </div>
+                      </div>
+                      <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-300 flex flex-col justify-center">
+                        <span className="text-sm font-semibold mb-2 text-yellow-700 dark:text-yellow-400 uppercase tracking-wider">Remaining Indent Qty</span>
+                        <div className="text-xl font-bold text-yellow-600 dark:text-yellow-400">
+                          {formatNumber(formData.remainingQtyKg)} Kg
                         </div>
                       </div>
                       <div className="p-4 bg-muted/30 rounded-lg border border-border flex flex-col justify-center">
@@ -663,9 +738,17 @@ const OilIndent = () => {
                         <div className="flex items-center gap-2">
                           <input 
                             type="number" 
-                            className="bg-background border border-border rounded-md px-3 py-2 text-xl font-bold text-primary w-[150px] outline-none focus:ring-2 focus:ring-primary/50"
+                            className="bg-background border border-border rounded-md px-3 py-2 text-xl font-bold text-primary w-[130px] outline-none focus:ring-2 focus:ring-primary/50"
                             value={formData.requiredQtyKg === 0 ? '' : formData.requiredQtyKg}
-                            onChange={(e) => setFormData({...formData, requiredQtyKg: Number(e.target.value)})}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              if (val > formData.remainingQtyKg) {
+                                alert(`Cannot indent more than remaining quantity (${formData.remainingQtyKg} Kg)`);
+                                return;
+                              }
+                              setFormData({...formData, requiredQtyKg: val});
+                            }}
+                            max={formData.remainingQtyKg}
                           />
                           <span className="text-lg font-bold text-primary">Kg</span>
                         </div>
@@ -771,7 +854,9 @@ const OilIndent = () => {
 
 
                   <div className="mb-6">
-                    <label className="block text-sm font-medium text-foreground mb-2">Receive Tank No.</label>
+                    <label className="block text-sm font-medium text-foreground mb-2">
+                      Receive Tank No. <span className="text-red-500">*</span>
+                    </label>
                     <select
                       value={formData.tankNo}
                       onChange={(e) => setFormData({ ...formData, tankNo: e.target.value })}

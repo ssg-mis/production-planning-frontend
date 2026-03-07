@@ -127,6 +127,7 @@ const DispatchPlanning = () => {
   const [remarks, setRemarks] = useState('');
   const [actualQtyKg, setActualQtyKg] = useState('');
   const [additivesData, setAdditivesData] = useState<any[]>([]);
+  const [labChemExpanded, setLabChemExpanded] = useState(false);
 
   useEffect(() => {
     initializeDefaultStocks();
@@ -180,6 +181,7 @@ const DispatchPlanning = () => {
             givenFromTankNo: item.given_from_tank_no,
             approvedQty: parseFloat(item.approved_qty || 0),
             approvalDate: item.approval_date,
+            additives: item.lab_additives || [],
           };
         });
         setItems(mapped);
@@ -294,10 +296,12 @@ const DispatchPlanning = () => {
     const mt = totalKg / 1000;
     const initialAdditives = baseAdditives.map(p => ({ 
       ...p, 
-      actualWeight: (mt * p.stdWtGm).toFixed(1) 
+      actualWeight: (mt * p.stdWtGm).toFixed(1),
+      fillWeight: (mt * p.stdWtGm).toFixed(1),
     }));
     
     setAdditivesData(initialAdditives);
+    setLabChemExpanded(false);
   }, [selectedItems, selectedProduct, showForm]);
 
   // Handle actual quantity change for auto-calculation
@@ -308,7 +312,8 @@ const DispatchPlanning = () => {
     
     setAdditivesData(prev => prev.map(p => ({
       ...p,
-      actualWeight: (mt * p.stdWtGm).toFixed(1)
+      actualWeight: (mt * p.stdWtGm).toFixed(1),
+      fillWeight: p.fillWeight !== undefined ? p.fillWeight : (mt * p.stdWtGm).toFixed(1),
     })));
   }, [actualQtyKg]);
 
@@ -319,6 +324,7 @@ const DispatchPlanning = () => {
     setRemarks('');
     setActualQtyKg('');
     setAdditivesData([]);
+    setLabChemExpanded(false);
   };
 
   const handleSubmit = async () => {
@@ -491,8 +497,11 @@ const DispatchPlanning = () => {
 
       {/* Dispatch Form Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={resetForm}
+        >
+          <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="p-6">
               <h2 className="text-lg font-bold text-foreground mb-4">Actual Dispatch</h2>
 
@@ -525,6 +534,7 @@ const DispatchPlanning = () => {
                         <p className="text-xs font-semibold mb-1 text-muted-foreground uppercase tracking-wider">Item(s) to be packed</p>
                         <div className="text-lg font-bold text-primary">
                             {Array.from(new Set(group.products.flatMap(p => {
+                              if (!p.productName) return [];
                               const parts = p.productName.split(' ');
                               return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
                             }))).join(', ')}
@@ -662,6 +672,49 @@ const DispatchPlanning = () => {
                       );
                     })()}
 
+                    {/* Lab Confirmation Chemical Results (from previous stage) */}
+                    {(() => {
+                      const labChemItems = group.products.flatMap(p =>
+                        p.items.flatMap(i => (i.additives && Array.isArray(i.additives) ? i.additives : []))
+                      );
+                      if (labChemItems.length === 0) return null;
+                      return (
+                        <div className="mb-6 border border-border rounded-lg overflow-hidden">
+                          <button
+                            type="button"
+                            className="w-full px-4 py-3 bg-muted/30 flex items-center justify-between text-sm font-bold text-foreground hover:bg-muted/50 transition-colors"
+                            onClick={() => setLabChemExpanded(v => !v)}
+                          >
+                            <span className="flex items-center gap-2">
+                              <Plus className="h-4 w-4 text-primary" />
+                              Lab Confirmation Chemical Results
+                            </span>
+                            {labChemExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          </button>
+                          {labChemExpanded && (
+                            <table className="w-full text-sm">
+                              <thead className="bg-muted/20 border-b border-border">
+                                <tr>
+                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">ITEM</th>
+                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">STANDARD</th>
+                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">RESULT</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-border bg-background">
+                                {labChemItems.map((chem: any, idx: number) => (
+                                  <tr key={idx} className="hover:bg-muted/20">
+                                    <td className="px-4 py-2 font-semibold text-foreground text-xs">{chem.item}</td>
+                                    <td className="px-4 py-2 text-muted-foreground text-xs">{chem.standard}</td>
+                                    <td className="px-4 py-2 text-xs font-medium text-primary">{chem.actual || '-'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {/* Chemical Additives Section */}
                     {(selectedProduct === 'Rice Bran Oil' || selectedProduct === 'Soybean Oil' || selectedProduct === 'Palm Oil') && (
                       <div className="mb-6">
@@ -676,43 +729,38 @@ const DispatchPlanning = () => {
                                 <th className="px-4 py-2 text-left">ITEM</th>
                                 <th className="px-4 py-2 text-left">STANDARD WEIGHT</th>
                                 <th className="px-4 py-2 text-left">ACTUAL WEIGHT</th>
-                                <th className="px-4 py-2 text-left">VENDOR</th>
-                                <th className="px-4 py-2 text-left">COST (EX-GST)</th>
-                                <th className="px-4 py-2 text-left">COST PER MT</th>
+                                <th className="px-4 py-2 text-left">FILL WEIGHT</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-border bg-background">
-                              {additivesData.map((add, idx) => {
-                                const costCalc = ((Number(add.actualWeight) || 0) / 1000) * (add.ratePerKg || 0);
-                                return (
-                                  <tr key={idx}>
-                                    <td className="px-4 py-3 font-semibold text-foreground text-xs">{add.item}</td>
-                                    <td className="px-4 py-3 text-muted-foreground text-xs">{add.weight}</td>
-                                    <td className="px-4 py-3">
-                                      <input
-                                        type="number"
-                                        value={add.actualWeight || ''}
-                                        onChange={(e) => {
-                                          const newData = [...additivesData];
-                                          newData[idx].actualWeight = e.target.value;
-                                          setAdditivesData(newData);
-                                        }}
-                                        placeholder="gm"
-                                        className="w-full bg-muted/20 border-border border rounded px-2 py-1 text-xs"
-                                      />
-                                    </td>
-                                    <td className="px-4 py-3 text-muted-foreground text-xs">{add.vendor}</td>
-                                    <td className="px-4 py-3 text-muted-foreground text-xs">{add.costExGst}</td>
-                                    <td className="px-4 py-3 font-bold text-foreground text-right">{costCalc.toFixed(2)}</td>
-                                  </tr>
-                                );
-                              })}
-                              <tr>
-                                <td colSpan={5} className="px-4 py-3 font-bold text-right text-xs">TOTAL COST</td>
-                                <td className="px-4 py-3 font-bold text-primary text-right">
-                                  {additivesData.reduce((sum, item) => sum + (((Number(item.actualWeight) || 0) / 1000) * (item.ratePerKg || 0)), 0).toFixed(2)}
-                                </td>
-                              </tr>
+                              {additivesData.map((add, idx) => (
+                                <tr key={idx}>
+                                  <td className="px-4 py-3 font-semibold text-foreground text-xs">{add.item}</td>
+                                  <td className="px-4 py-3 text-muted-foreground text-xs">{add.weight}</td>
+                                  <td className="px-4 py-3">
+                                    <input
+                                      type="number"
+                                      value={add.actualWeight || ''}
+                                      disabled
+                                      placeholder="gm"
+                                      className="w-full bg-muted/40 border-border border rounded px-2 py-1 text-xs text-muted-foreground cursor-not-allowed"
+                                    />
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <input
+                                      type="number"
+                                      value={add.fillWeight !== undefined ? add.fillWeight : add.actualWeight || ''}
+                                      onChange={(e) => {
+                                        const newData = [...additivesData];
+                                        newData[idx].fillWeight = e.target.value;
+                                        setAdditivesData(newData);
+                                      }}
+                                      placeholder="gm"
+                                      className="w-full bg-muted/20 border-border border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-primary outline-none"
+                                    />
+                                  </td>
+                                </tr>
+                              ))}
                             </tbody>
                           </table>
                         </div>

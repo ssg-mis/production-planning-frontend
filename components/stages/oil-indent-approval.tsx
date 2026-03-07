@@ -255,6 +255,10 @@ const OilIndentApproval = () => {
       alert('Please select an oil type and at least one item');
       return;
     }
+    if (formData.action === 'approve' && !formData.givenFromTankNo) {
+      alert('Please select a tank in "Give from Tank No." field');
+      return;
+    }
     try {
       for (const productionId of selectedItems) {
         const item = approvals.find(a => a.id === productionId);
@@ -651,17 +655,26 @@ const OilIndentApproval = () => {
                         </div>
                         
                         <div>
-                            <label className="block text-sm font-medium text-foreground mb-2">Give from Tank No.</label>
+                            <label className="block text-sm font-medium text-foreground mb-2">
+                              Give from Tank No. {formData.action === 'approve' && <span className="text-red-500 ml-0.5">*</span>}
+                            </label>
                             <select
                                 value={formData.givenFromTankNo}
                                 onChange={e => setFormData({ ...formData, givenFromTankNo: e.target.value })}
-                                className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground focus:ring-2 focus:ring-primary/50 outline-none"
+                                className={`w-full px-3 py-2 border rounded-lg bg-background text-foreground focus:ring-2 focus:ring-primary/50 outline-none ${
+                                  formData.action === 'approve' && !formData.givenFromTankNo
+                                    ? 'border-red-400 focus:ring-red-400/50'
+                                    : 'border-border'
+                                }`}
                             >
                                 <option value="">-- Select Tank --</option>
                                 <option value="1">Tank 1</option>
                                 <option value="2">Tank 2</option>
                                 <option value="3">Tank 3</option>
                             </select>
+                            {formData.action === 'approve' && !formData.givenFromTankNo && (
+                              <p className="text-xs text-red-500 mt-1">Tank selection is required for approval</p>
+                            )}
                         </div>
                     </div>
 
@@ -759,7 +772,7 @@ const OilIndentApproval = () => {
                 <Button
                   onClick={handleApprovalSubmit}
                   className={formData.action === 'approve' ? 'bg-primary hover:bg-primary/90' : 'bg-red-600 hover:bg-red-700'}
-                  disabled={!selectedProduct || selectedItems.length === 0}
+                  disabled={!selectedProduct || selectedItems.length === 0 || (formData.action === 'approve' && !formData.givenFromTankNo)}
                 >
                   {formData.action === 'approve' ? 'Approve & Send to Lab' : 'Reject Selected'}
                 </Button>

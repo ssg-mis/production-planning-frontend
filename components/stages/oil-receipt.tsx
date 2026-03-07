@@ -8,7 +8,6 @@ import StageHeader from '@/components/stage-header';
 import TableSkeleton from '@/components/table-skeleton';
 import { ChevronDown, ChevronRight, Plus, Loader2 } from 'lucide-react';
 
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
@@ -124,6 +123,7 @@ const OilReceipt = () => {
     receivedDate: new Date().toISOString().split('T')[0],
     remarks: '',
   });
+  const [dispatchChemExpanded, setDispatchChemExpanded] = useState(false);
 
   const fetchReceipts = async () => {
     setLoading(true);
@@ -150,7 +150,8 @@ const OilReceipt = () => {
                 approved_qty: item.approved_qty ? parseFloat(item.approved_qty) : undefined,
                 given_from_tank_no: item.given_from_tank_no,
                 created_at: item.created_at,
-              }
+              },
+              dispatch_additives: item.dispatch_additives || [],
             };
           }
           return {
@@ -296,6 +297,7 @@ const OilReceipt = () => {
       setShowForm(false);
       setSelectedOilType('');
       setSelectedProductionIds([]);
+      setDispatchChemExpanded(false);
       setFormData({
         receivedBy: '',
         receivedDate: new Date().toISOString().split('T')[0],
@@ -437,8 +439,16 @@ const OilReceipt = () => {
       </Card>
 
       {showForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={() => {
+            setShowForm(false);
+            setSelectedOilType('');
+            setSelectedProductionIds([]);
+            setDispatchChemExpanded(false);
+          }}
+        >
+          <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="p-6">
               <h2 className="text-lg font-bold text-foreground mb-4">Process Oil Receipt</h2>
               
@@ -463,6 +473,7 @@ const OilReceipt = () => {
                         <p className="text-xs font-semibold mb-1 text-muted-foreground uppercase tracking-wider">Item(s) to be packed</p>
                         <div className="text-lg font-bold text-primary">
                             {Array.from(new Set(group.products.flatMap(p => {
+                              if (!p.productName) return [];
                               const parts = p.productName.split(' ');
                               return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
                             }))).join(', ')}
@@ -572,6 +583,51 @@ const OilReceipt = () => {
                         </p>
                       </div>
                     </div>
+
+                    {/* Chemical Additives from Actual Dispatch */}
+                    {(() => {
+                      const dispatchChemItems = group.products.flatMap(p =>
+                        p.items.flatMap((i: any) => (i.dispatch_additives && Array.isArray(i.dispatch_additives) ? i.dispatch_additives : []))
+                      );
+                      if (dispatchChemItems.length === 0) return null;
+                      return (
+                        <div className="mb-6 border border-border rounded-lg overflow-hidden">
+                          <button
+                            type="button"
+                            className="w-full px-4 py-3 bg-muted/30 flex items-center justify-between text-sm font-bold text-foreground hover:bg-muted/50 transition-colors"
+                            onClick={() => setDispatchChemExpanded(v => !v)}
+                          >
+                            <span className="flex items-center gap-2">
+                              <Plus className="h-4 w-4 text-primary" />
+                              Chemical Additives (from Actual Dispatch)
+                            </span>
+                            {dispatchChemExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          </button>
+                          {dispatchChemExpanded && (
+                            <table className="w-full text-sm">
+                              <thead className="bg-muted/20 border-b border-border">
+                                <tr>
+                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">ITEM</th>
+                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">STANDARD WEIGHT</th>
+                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">ACTUAL WEIGHT</th>
+                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">FILL WEIGHT</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-border bg-background">
+                                {dispatchChemItems.map((chem: any, idx: number) => (
+                                  <tr key={idx} className="hover:bg-muted/20">
+                                    <td className="px-4 py-2 font-semibold text-foreground text-xs">{chem.item}</td>
+                                    <td className="px-4 py-2 text-muted-foreground text-xs">{chem.weight || chem.standard || '-'}</td>
+                                    <td className="px-4 py-2 text-xs font-medium text-foreground">{chem.actualWeight || '-'}</td>
+                                    <td className="px-4 py-2 text-xs font-medium text-primary">{chem.fillWeight || chem.actualWeight || '-'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     <div className="grid grid-cols-2 gap-4 mb-6">
                       <div>

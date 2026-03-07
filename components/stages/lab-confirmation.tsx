@@ -350,6 +350,15 @@ const LabConfirmation = () => {
       return;
     }
 
+    // Validate: all Chemical Additives Results must be filled
+    if (additivesData.length > 0) {
+      const emptyResults = additivesData.filter(a => !a.actual || a.actual.trim() === '');
+      if (emptyResults.length > 0) {
+        alert(`Please fill in Result for all chemical parameters. Missing: ${emptyResults.map((a: any) => a.item).join(', ')}`);
+        return;
+      }
+    }
+
     try {
       for (const productionId of selectedItems) {
         const item = confirmations.find(c => c.id === productionId);
@@ -502,8 +511,11 @@ const LabConfirmation = () => {
 
       {/* Lab Confirmation Form Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={resetForm}
+        >
+          <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="p-6">
               <h2 className="text-lg font-bold text-foreground mb-4">Quality Approval & Oil Issue</h2>
 
@@ -543,10 +555,11 @@ const LabConfirmation = () => {
                     <div className="mb-6 p-4 bg-muted/30 rounded-lg border border-border">
                         <p className="text-xs font-semibold mb-1 text-muted-foreground uppercase tracking-wider">Item(s) to be packed</p>
                         <div className="text-lg font-bold text-primary">
-                            {Array.from(new Set(group.products.flatMap(p => {
-                              const parts = p.productName.split(' ');
-                              return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
-                            }))).join(', ')}
+                                {Array.from(new Set(group.products.flatMap(p => {
+                                  if (!p.productName) return [];
+                                  const parts = p.productName.split(' ');
+                                  return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
+                                }))).join(', ')}
                         </div>
                     </div>
 
@@ -629,8 +642,10 @@ const LabConfirmation = () => {
                               <tr>
                                 <th className="px-4 py-2 text-left">ITEM</th>
                                 <th className="px-4 py-2 text-left">STANDARD</th>
-                                <th className="px-4 py-2 text-left">RESULTS</th>
-                                <th className="px-4 py-2 text-left w-24">UPLOAD</th>
+                                <th className="px-4 py-2 text-left">
+                                  RESULTS <span className="text-red-500 ml-0.5">*</span>
+                                </th>
+                                <th className="px-4 py-2 text-left w-32">UPLOAD</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-border bg-background">
@@ -648,10 +663,15 @@ const LabConfirmation = () => {
                                         setAdditivesData(newData);
                                       }}
                                       placeholder="Result"
-                                      className="w-full bg-muted/20 border-border border rounded px-2 py-1 text-xs"
+                                      required
+                                      className={`w-full border rounded px-2 py-1 text-xs outline-none transition-all ${
+                                        !add.actual || add.actual.trim() === ''
+                                          ? 'border-red-400 bg-red-50/50 focus:ring-1 focus:ring-red-400'
+                                          : 'border-border bg-muted/20 focus:ring-1 focus:ring-primary'
+                                      }`}
                                     />
                                   </td>
-                                  <td className="px-4 py-3 text-xs w-24">
+                                  <td className="px-4 py-3 text-xs w-32">
                                     <input type="file" accept="image/*" className="w-full text-xs" />
                                   </td>
                                 </tr>

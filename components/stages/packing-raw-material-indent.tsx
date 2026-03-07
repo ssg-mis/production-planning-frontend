@@ -273,61 +273,54 @@ const PackingRawMaterialIndent = () => {
 
     try {
       const ordersToSubmit = indents.filter(i => selectedOrders.includes(i.id));
+      const errors: string[] = [];
+      const alreadyDone: string[] = [];
       
       for (const order of ordersToSubmit) {
-        // Compute base order payload resolving explicit fraction mappings proportionally if an override exists.
-        // Total oil quantity (Kg) being indented in this transaction
-      const totalOilQtyToIndent = ordersToSubmit.reduce((sum, o) => sum + o.balanceKg, 0);
+        const payload = {
+          productionId: order.id,
+          oilQty: order.balanceKg, // Use this specific order's qty, not total
+          bomItems: order.bom.map(b => {
+              const perUnit = parseFloat(b.rmqty?.replace(/,/g, '') || '0');
+              const defaultTotalReq = isNaN(perUnit) ? 0 : Math.round(perUnit * order.balanceQty * 100) / 100;
 
-      const payload = {
-        productionId: order.id,
-        oilQty: totalOilQtyToIndent, // Passing the total oil weight covered by this indent
-        bomItems: order.bom.map(b => {
-            const perUnit = parseFloat(b.rmqty?.replace(/,/g, '') || '0');
-            const defaultTotalReq = isNaN(perUnit) ? 0 : perUnit * order.balanceQty;
+              // Calculate final allocated by summing contributions from each SKU this order belongs to
+              let finalAllocated = 0;
+              let hasManualAllocation = false;
 
-            // Calculate final allocated by summing contributions from each SKU this order belongs to
-            let finalAllocated = 0;
-            let hasManualAllocation = false;
+              const orderSkus = order.skuBoms || [];
+              orderSkus.forEach(os => {
+                const skuCount = orderSkus.length || 1;
+                const splitKg = order.balanceKg / skuCount;
+                
+                const totalSkuKg = indents
+                  .filter(i => selectedOrders.includes(i.id))
+                  .reduce((sum, i) => {
+                    const match = (i.skuBoms || []).find(s => s.skuName === os.skuName);
+                    if (match) return sum + (i.balanceKg / (i.skuBoms?.length || 1));
+                    return sum;
+                  }, 0);
 
-            const orderSkus = order.skuBoms || [];
-            orderSkus.forEach(os => {
-              const skuCount = orderSkus.length || 1;
-              const splitKg = order.balanceKg / skuCount;
-              
-              // Find total weight of this SKU across all selected orders in the group
-              const totalSkuKg = indents
-                .filter(i => selectedOrders.includes(i.id))
-                .reduce((sum, i) => {
-                  const match = (i.skuBoms || []).find(s => s.skuName === os.skuName);
-                  if (match) return sum + (i.balanceKg / (i.skuBoms?.length || 1));
-                  return sum;
-                }, 0);
-
-              const groupKey = `SKU_${os.skuName}_${b.rmname}`;
-              if (bomAllocations[groupKey] !== undefined) {
-                hasManualAllocation = true;
-                if (totalSkuKg > 0) {
-                  // This order's contribution from this SKU's manual allocation (proportional)
-                  finalAllocated += (splitKg / totalSkuKg) * bomAllocations[groupKey];
+                const groupKey = `SKU_${os.skuName}_${b.rmname}`;
+                if (bomAllocations[groupKey] !== undefined) {
+                  hasManualAllocation = true;
+                  if (totalSkuKg > 0) {
+                    finalAllocated += (splitKg / totalSkuKg) * bomAllocations[groupKey];
+                  }
+                } else {
+                  finalAllocated += isNaN(perUnit) ? 0 : Math.round(perUnit * splitKg * 100) / 100;
                 }
-              } else {
-                // If no manual allocation for this SKU, add its default requirement
-                finalAllocated += isNaN(perUnit) ? 0 : perUnit * splitKg;
-              }
-            });
+              });
 
-            // If absolutely no manual allocations were found for ANY SKU of this order for this RM, 
-            // fallback to the default total requirement (which should be the same as the sum of defaults)
-            if (!hasManualAllocation) finalAllocated = defaultTotalReq;
+              if (!hasManualAllocation) finalAllocated = defaultTotalReq;
 
-            return {
-              itemName: b.rmname,
-              qtyRequired: defaultTotalReq,
-              qtyAllocated: finalAllocated
-            };
-          })
-        };
+              return {
+                itemName: b.rmname,
+                qtyRequired: Math.round(defaultTotalReq * 100) / 100,
+                qtyAllocated: Math.round(finalAllocated * 100) / 100,
+              };
+            })
+          };
 
         const response = await fetch(`${API_BASE_URL}/packing-raw-material`, {
           method: 'POST',
@@ -335,13 +328,27 @@ const PackingRawMaterialIndent = () => {
           body: JSON.stringify(payload)
         });
 
-        if (!response.ok) throw new Error(`Failed to process order ${order.id}`);
+        if (response.status === 409) {
+          alreadyDone.push(order.id);
+        } else if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          errors.push(`${order.id}: ${errData.details || errData.error || 'Unknown error'}`);
+        }
       }
 
-      alert('✅ Packing indents created successfully!');
-      setShowIndentForm(false);
-      setSelectedOrders([]);
-      fetchIndents();
+      if (errors.length > 0) {
+        alert(`❌ Errors:\n${errors.join('\n')}`);
+      } else if (alreadyDone.length > 0) {
+        alert(`⚠️ Already submitted: ${alreadyDone.join(', ')}\n\nThese were skipped (already processed).`);
+        setShowIndentForm(false);
+        setSelectedOrders([]);
+        fetchIndents();
+      } else {
+        alert('✅ Packing indents created successfully!');
+        setShowIndentForm(false);
+        setSelectedOrders([]);
+        fetchIndents();
+      }
     } catch (error) {
       console.error('Error submitting packing indents:', error);
       alert('❌ Error submitting packing indents');
@@ -387,6 +394,7 @@ const PackingRawMaterialIndent = () => {
               <tbody className="divide-y divide-border">
                 {grouped.map((group, gIdx) => {
                 const uniqueItemsPacked = Array.from(new Set(group.products.flatMap(p => {
+                  if (!p.productName) return [];
                   const parts = p.productName.split(' ');
                   return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
                 }))).join(', ') || '-';
@@ -470,6 +478,7 @@ const PackingRawMaterialIndent = () => {
                         <p className="text-xs font-semibold mb-1 text-muted-foreground uppercase tracking-wider">Item(s) to be packed</p>
                         <div className="text-lg font-bold text-primary mb-4">
                             {Array.from(new Set(group.products.flatMap(p => {
+                              if (!p.productName) return [];
                               const parts = p.productName.split(' ');
                               return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
                             }))).join(', ')}

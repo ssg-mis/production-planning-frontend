@@ -11,7 +11,7 @@ export default function TableSkeleton({
   rows?: number;
 }) {
   return (
-    <>
+    <tbody>
       {Array.from({ length: rows }).map((_, rowIdx) => (
         <tr key={rowIdx} className="border-b border-border">
           {Array.from({ length: cols }).map((_, colIdx) => (
@@ -24,6 +24,6 @@ export default function TableSkeleton({
           ))}
         </tr>
       ))}
-    </>
+    </tbody>
   );
 }

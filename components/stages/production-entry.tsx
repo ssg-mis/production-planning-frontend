@@ -355,6 +355,7 @@ const ProductionEntry = () => {
               <tbody className="divide-y divide-border">
                 {oilTypeGroups.map((group, gIdx) => {
                   const uniqueItemsPacked = Array.from(new Set(group.products.flatMap(p => {
+                      if (!p.productName) return [];
                       const parts = p.productName.split(' ');
                       return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
                     }))).join(', ') || '-';

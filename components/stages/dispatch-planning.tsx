@@ -408,9 +408,8 @@ const DispatchPlanning = () => {
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Available Stock</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Approval Qty</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Given Tank No.</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Tank No.</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Receive Tank No.</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Packing Type</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Lab Status</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Action</th>
               </tr>
             </thead>
@@ -449,19 +448,7 @@ const DispatchPlanning = () => {
                       <td className="px-4 py-3 text-sm text-foreground">
                         {Array.from(new Set(group.products.map(p => p.packingType && p.packingType !== '-' ? p.packingType : p.items.find(i => i.packingType)?.packingType).filter(v => v && v !== '-'))).join(', ') || '-'}
                       </td>
-                      <td className="px-4 py-3 text-sm">
-                        {(() => {
-                          const statuses = Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.status)).filter(Boolean)));
-                          if (statuses.length === 0) {
-                            return (
-                              <Badge className={getStatusColor('Approved')}>Approved</Badge>
-                            );
-                          }
-                          return statuses.map((status, idx) => (
-                            <Badge key={idx} className={`${getStatusColor(status)} mr-1`}>{status === 'Confirmed' ? 'Approved' : status}</Badge>
-                          ));
-                        })()}
-                      </td>
+
                       <td className="px-4 py-3 text-sm">
                         {activeTab === 'pending' && (
                           <Button 
@@ -484,7 +471,7 @@ const DispatchPlanning = () => {
 
               {oilTypeGroups.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="p-8 text-center text-muted-foreground">
+                  <td colSpan={9} className="p-8 text-center text-muted-foreground">
                     No {activeTab === 'pending' ? 'pending' : 'history'} dispatch plans
                   </td>
                 </tr>
@@ -578,7 +565,7 @@ const DispatchPlanning = () => {
                                     <th className="px-3 py-2 text-left font-medium text-muted-foreground">Select</th>
                                     <th className="px-3 py-2 text-left font-medium text-muted-foreground">Production ID</th>
                                     <th className="px-3 py-2 text-left font-medium text-muted-foreground">Indent Qty (Kg)</th>
-                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Tank No.</th>
+                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Receive Tank No.</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border bg-background">

@@ -81,6 +81,8 @@ interface OilReceiptItem {
     given_from_tank_no?: string;
     created_at: string;
   };
+  lab_additives?: any[];
+  dispatch_additives?: any[];
 }
 
 interface ProductGroup {
@@ -115,7 +117,6 @@ const OilReceipt = () => {
   const [items, setItems] = useState<OilReceiptItem[]>([]);
 
   // Form state
-  const [formDetailsExpanded, setFormDetailsExpanded] = useState<boolean>(false);
   const [selectedOilType, setSelectedOilType] = useState<string>('');
   const [selectedProductionIds, setSelectedProductionIds] = useState<string[]>([]);
   const [formData, setFormData] = useState({
@@ -124,6 +125,8 @@ const OilReceipt = () => {
     remarks: '',
   });
   const [dispatchChemExpanded, setDispatchChemExpanded] = useState(false);
+  const [labChemExpanded, setLabChemExpanded] = useState(false);
+  const [chemResultsExpanded, setChemResultsExpanded] = useState(false);
 
   const fetchReceipts = async () => {
     setLoading(true);
@@ -151,21 +154,24 @@ const OilReceipt = () => {
                 given_from_tank_no: item.given_from_tank_no,
                 created_at: item.created_at,
               },
-              dispatch_additives: item.dispatch_additives || [],
-            };
-          }
-          return {
-            ...item,
-            indentDetails: {
-              ...item.indentDetails,
-              indent_quantity: parseFloat(item.indentDetails?.indent_quantity || 0),
-              total_weight_kg: parseFloat(item.indentDetails?.total_weight_kg || 0),
-              actual_qty_kg: item.indentDetails?.actual_qty_kg ? parseFloat(item.indentDetails.actual_qty_kg) : undefined,
-              approved_qty: item.indentDetails?.approved_qty ? parseFloat(item.indentDetails.approved_qty) : undefined,
-              given_from_tank_no: item.indentDetails?.given_from_tank_no,
+                lab_additives: item.lab_additives || [],
+                dispatch_additives: item.dispatch_additives || [],
+              };
             }
-          };
-        });
+            return {
+              ...item,
+              lab_additives: item.indentDetails?.lab_additives || [],
+              dispatch_additives: item.indentDetails?.dispatch_additives || [],
+              indentDetails: {
+                ...item.indentDetails,
+                indent_quantity: parseFloat(item.indentDetails?.indent_quantity || 0),
+                total_weight_kg: parseFloat(item.indentDetails?.total_weight_kg || 0),
+                actual_qty_kg: item.indentDetails?.actual_qty_kg ? parseFloat(item.indentDetails.actual_qty_kg) : undefined,
+                approved_qty: item.indentDetails?.approved_qty ? parseFloat(item.indentDetails.approved_qty) : undefined,
+                given_from_tank_no: item.indentDetails?.given_from_tank_no,
+              }
+            };
+          });
         setItems(mapped);
       }
     } catch (error) {
@@ -358,6 +364,7 @@ const OilReceipt = () => {
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground w-8" />
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Product Name / Oil Type</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Item to be packed</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Indent Qty (Kg)</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Approval Qty (Kg)</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Available Stock</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Dispatch (Kg)</th>
@@ -369,7 +376,7 @@ const OilReceipt = () => {
               </tr>
             </thead>
             {loading ? (
-              <TableSkeleton cols={11} rows={5} />
+              <TableSkeleton cols={12} rows={5} />
             ) : (
               <tbody className="divide-y divide-border">
                 {oilTypeGroups.map((group, gi) => {
@@ -385,6 +392,9 @@ const OilReceipt = () => {
                         </td>
                         <td className="px-4 py-3 text-sm text-foreground">
                           <Badge variant="outline" className="font-mono">{categorizeItemToBePacked(group.type)}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-base font-bold text-foreground font-mono">
+                          {formatNumber(group.totalWeightKg)}
                         </td>
                         <td className="px-4 py-3 text-base font-bold text-foreground font-mono">
                           {formatNumber(group.approvedQtyKg)}
@@ -469,236 +479,212 @@ const OilReceipt = () => {
                     </div>
 
                     {/* Item to be packed section - Always Visible */}
-                    <div className="mb-6 p-4 bg-muted/30 rounded-lg border border-border">
+                      <div className="mb-6 p-4 bg-muted/30 rounded-lg border border-border">
                         <p className="text-xs font-semibold mb-1 text-muted-foreground uppercase tracking-wider">Item(s) to be packed</p>
                         <div className="text-lg font-bold text-primary">
-                            {Array.from(new Set(group.products.flatMap(p => {
-                              if (!p.productName) return [];
-                              const parts = p.productName.split(' ');
-                              return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
-                            }))).join(', ')}
+                          {Array.from(new Set(group.products.flatMap(p => {
+                            if (!p.productName) return [];
+                            const parts = p.productName.split(' ');
+                            return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
+                          }))).join(', ')}
                         </div>
-                    </div>
-                    {/* Order Details — grouped by product, collapsible */}
-                    <div className="mb-6">
-                      <div className="flex justify-between items-center mb-2">
-                        <h3 className="text-sm font-bold text-foreground">Order Details</h3>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setFormDetailsExpanded(!formDetailsExpanded)}
-                          className="h-8 py-0 underline text-primary"
+                      </div>
+
+                      {/* Tank Summary Cards - RESTORED */}
+                      <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex flex-col justify-center">
+                          <span className="text-xs text-blue-600 uppercase font-semibold">Receive Tank No:</span>
+                          <p className="font-bold text-foreground">
+                            {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.tank_no)).filter(v => v && v !== '-'))).join(', ') || 'N/A'}
+                          </p>
+                        </div>
+                        <div className="p-3 bg-green-50 border border-green-100 rounded-lg flex flex-col justify-center">
+                          <span className="text-xs text-green-600 uppercase font-semibold">Give Tank No:</span>
+                          <p className="font-bold text-foreground">
+                            {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.given_from_tank_no)).filter(v => v && v !== '-'))).join(', ') || 'N/A'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Chemical Results (Combined) - Hidden by default */}
+                      <div className="mb-6 border border-border rounded-lg overflow-hidden">
+                        <button
+                          type="button"
+                          className="w-full px-4 py-3 bg-muted/30 flex items-center justify-between text-sm font-bold text-foreground hover:bg-muted/50 transition-colors"
+                          onClick={() => setChemResultsExpanded(v => !v)}
                         >
-                          {formDetailsExpanded ? 'Hide Details' : 'Show Details'}
-                        </Button>
-                      </div>
-                      
-                      {formDetailsExpanded && (
-                        <div className="space-y-3">
-                          {group.products.map((prod, pi) => (
-                            <div key={pi} className="border border-border rounded-lg overflow-hidden">
-                              <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
-                                <span className="text-sm font-semibold text-foreground">
-                                  {prod.productName}{prod.packingSize ? ' ' + prod.packingSize : ''}
-                                </span>
-                                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                                  <span>Stock: {prod.availableStock}</span>
-                                  {prod.shortage > 0 && (
-                                    <span className="text-red-600 font-semibold">Shortage: {formatNumber(prod.shortage)}</span>
-                                  )}
-                                </div>
-                              </div>
+                          <span className="flex items-center gap-2">
+                            <Plus className="h-4 w-4 text-primary" />
+                            Chemical Results (Lab & Dispatch)
+                          </span>
+                          {chemResultsExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </button>
+                        
+                        {chemResultsExpanded && (
+                          <div className="p-4 space-y-6 bg-background">
+                            {/* Lab Confirmation Results - DEDUPLICATED */}
+                            {(() => {
+                              const labChemItems = group.products.flatMap(p => 
+                                p.items.flatMap((i: any) => (i.lab_additives && Array.isArray(i.lab_additives) ? i.lab_additives : []))
+                              );
+                              if (labChemItems.length === 0) return null;
                               
-                              <table className="w-full text-sm">
-                                <thead className="bg-muted/20 border-b border-border">
-                                  <tr>
-                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Timestamp</th>
-                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground w-12">Select</th>
-                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Production ID</th>
-                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Indent Qty (Kg)</th>
-                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Tank No.</th>
-                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Give Tank No.</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-border bg-background">
-                                  {prod.items.map((item, idx) => (
-                                    <tr key={idx} className="hover:bg-muted/30">
-                                      <td className="px-3 py-2 text-xs text-muted-foreground">
-                                        {(() => {
-                                          const d = item.indentDetails?.created_at;
-                                          return d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
-                                        })()}
-                                      </td>
-                                      <td className="px-3 py-2">
-                                        <input
-                                          type="checkbox"
-                                          checked={selectedProductionIds.includes(item.production_id)}
-                                          onChange={() => handleItemToggle(item.production_id)}
-                                          className="w-4 h-4 rounded border-primary text-primary"
-                                        />
-                                      </td>
-                                      <td className="px-3 py-2 font-mono text-xs">{item.production_id}</td>
-                                      <td className="px-3 py-2 font-semibold text-primary">{formatNumber(item.indentDetails.indent_quantity)}</td>
-                                      <td className="px-3 py-2">{item.indentDetails.tank_no || '-'}</td>
-                                      <td className="px-3 py-2">{item.indentDetails.given_from_tank_no || '-'}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                              // Deduplicate by item name
+                              const uniqueLabChems = Array.from(new Map(labChemItems.map(c => [c.item, c])).values());
+
+                              return (
+                                <div>
+                                  <h4 className="text-xs font-bold text-muted-foreground uppercase mb-2">Lab Confirmation Results</h4>
+                                  <table className="w-full text-xs">
+                                    <thead className="bg-muted/20 border-b border-border">
+                                      <tr>
+                                        <th className="px-3 py-2 text-left font-medium">ITEM</th>
+                                        <th className="px-3 py-2 text-left font-medium">STANDARD</th>
+                                        <th className="px-3 py-2 text-left font-medium">RESULT</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border">
+                                      {uniqueLabChems.map((chem: any, idx: number) => (
+                                        <tr key={idx} className="hover:bg-muted/10">
+                                          <td className="px-3 py-2 font-semibold">{chem.item}</td>
+                                          <td className="px-3 py-2 text-muted-foreground">{chem.standard}</td>
+                                          <td className="px-3 py-2 font-medium text-primary">{chem.actual || '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Chemical Additives Planning - DEDUPLICATED */}
+                            {(() => {
+                              const dispatchChemItems = group.products.flatMap(p =>
+                                p.items.flatMap((i: any) => (i.dispatch_additives && Array.isArray(i.dispatch_additives) ? i.dispatch_additives : []))
+                              );
+                              if (dispatchChemItems.length === 0) return null;
+                              
+                              // Deduplicate by item name
+                              const uniqueDispatchChems = Array.from(new Map(dispatchChemItems.map(c => [c.item, c])).values());
+
+                              return (
+                                <div>
+                                  <h4 className="text-xs font-bold text-muted-foreground uppercase mb-2">Chemical Additives (from Actual Dispatch)</h4>
+                                  <table className="w-full text-xs">
+                                    <thead className="bg-muted/20 border-b border-border">
+                                      <tr>
+                                        <th className="px-3 py-2 text-left font-medium">ITEM</th>
+                                        <th className="px-3 py-2 text-left font-medium">STANDARD WEIGHT</th>
+                                        <th className="px-3 py-2 text-left font-medium">ACTUAL WEIGHT</th>
+                                        <th className="px-3 py-2 text-left font-medium text-primary">FILL WEIGHT</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border">
+                                      {uniqueDispatchChems.map((chem: any, idx: number) => (
+                                        <tr key={idx} className="hover:bg-muted/10">
+                                          <td className="px-3 py-2 font-semibold">{chem.item}</td>
+                                          <td className="px-3 py-2 text-muted-foreground">{chem.weight || chem.standard || '-'}</td>
+                                          <td className="px-3 py-2">{chem.actualWeight || '-'}</td>
+                                          <td className="px-3 py-2 font-medium text-primary">{chem.fillWeight || chem.actualWeight || '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Summary card logic - CLEANED UP */}
+                      {(() => {
+                        const totalDispatchQty = group.products
+                          .flatMap(p => p.items)
+                          .filter(i => selectedProductionIds.includes(i.production_id))
+                          .reduce((sum, i) => sum + (i.indentDetails.actual_qty_kg || i.indentDetails.approved_qty || i.indentDetails.indent_quantity || 0), 0);
+                        return (
+                          <div className="mb-6">
+                            <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
+                              <span className="text-xs font-semibold text-primary uppercase tracking-wider">Total Dispatch Qty (Kg)</span>
+                              <p className="text-xl font-bold text-primary mt-1">{formatNumber(totalDispatchQty)}</p>
+                              <p className="text-xs text-muted-foreground mt-1">(from Actual Dispatch stage)</p>
                             </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Dispatch Qty Summary card */}
-                    {(() => {
-                      const totalDispatchQty = group.products
-                        .flatMap(p => p.items)
-                        .filter(i => selectedProductionIds.includes(i.production_id))
-                        .reduce((sum, i) => sum + (i.indentDetails.actual_qty_kg || i.indentDetails.approved_qty || i.indentDetails.indent_quantity || 0), 0);
-                      return (
-                        <div className="mb-6 grid grid-cols-2 gap-4">
-                          <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
-                            <span className="text-xs font-semibold text-primary uppercase tracking-wider">Total Dispatch Qty (Kg)</span>
-                            <p className="text-xl font-bold text-primary mt-1">{formatNumber(totalDispatchQty)}</p>
-                            <p className="text-xs text-muted-foreground mt-1">(from Actual Dispatch stage)</p>
                           </div>
-                          <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex flex-col justify-center">
-                            <span className="text-xs text-blue-600 uppercase font-semibold">Receive Tank No:</span>
-                            <p className="font-bold text-foreground">
-                              {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.tank_no)).filter(v => v && v !== '-'))).join(', ') || 'N/A'}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })()}
+                        );
+                      })()}
 
-                    {/* Give Tank No */}
-                    <div className="mb-6">
-                      <div className="p-3 bg-green-50 border border-green-100 rounded-lg">
-                        <span className="text-xs text-green-600 uppercase font-semibold">Give Tank No:</span>
-                        <p className="font-bold text-foreground">
-                          {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.indentDetails?.given_from_tank_no)).filter(v => v && v !== '-'))).join(', ') || 'N/A'}
-                        </p>
+                      <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div>
+                          <label className="block text-sm font-medium text-foreground mb-2">
+                            Received By <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={formData.receivedBy}
+                            onChange={(e) => setFormData({ ...formData, receivedBy: e.target.value })}
+                            className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
+                            placeholder="Name of Receiver"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-foreground mb-2">Received Date</label>
+                          <input
+                            type="date"
+                            value={formData.receivedDate}
+                            onChange={(e) => setFormData({ ...formData, receivedDate: e.target.value })}
+                            className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
+                          />
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Chemical Additives from Actual Dispatch */}
-                    {(() => {
-                      const dispatchChemItems = group.products.flatMap(p =>
-                        p.items.flatMap((i: any) => (i.dispatch_additives && Array.isArray(i.dispatch_additives) ? i.dispatch_additives : []))
-                      );
-                      if (dispatchChemItems.length === 0) return null;
-                      return (
-                        <div className="mb-6 border border-border rounded-lg overflow-hidden">
-                          <button
-                            type="button"
-                            className="w-full px-4 py-3 bg-muted/30 flex items-center justify-between text-sm font-bold text-foreground hover:bg-muted/50 transition-colors"
-                            onClick={() => setDispatchChemExpanded(v => !v)}
-                          >
-                            <span className="flex items-center gap-2">
-                              <Plus className="h-4 w-4 text-primary" />
-                              Chemical Additives (from Actual Dispatch)
-                            </span>
-                            {dispatchChemExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                          </button>
-                          {dispatchChemExpanded && (
-                            <table className="w-full text-sm">
-                              <thead className="bg-muted/20 border-b border-border">
-                                <tr>
-                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">ITEM</th>
-                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">STANDARD WEIGHT</th>
-                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">ACTUAL WEIGHT</th>
-                                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">FILL WEIGHT</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-border bg-background">
-                                {dispatchChemItems.map((chem: any, idx: number) => (
-                                  <tr key={idx} className="hover:bg-muted/20">
-                                    <td className="px-4 py-2 font-semibold text-foreground text-xs">{chem.item}</td>
-                                    <td className="px-4 py-2 text-muted-foreground text-xs">{chem.weight || chem.standard || '-'}</td>
-                                    <td className="px-4 py-2 text-xs font-medium text-foreground">{chem.actualWeight || '-'}</td>
-                                    <td className="px-4 py-2 text-xs font-medium text-primary">{chem.fillWeight || chem.actualWeight || '-'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
-                      );
-                    })()}
-
-                    <div className="grid grid-cols-2 gap-4 mb-6">
-                      <div>
-                        <label className="block text-sm font-medium text-foreground mb-2">
-                          Received By <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.receivedBy}
-                          onChange={(e) => setFormData({ ...formData, receivedBy: e.target.value })}
-                          className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
-                          placeholder="Name of Receiver"
+                      <div className="mb-6">
+                        <label className="block text-sm font-medium text-foreground mb-2">Remarks</label>
+                        <textarea
+                          value={formData.remarks}
+                          onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
+                          placeholder="Add any remarks or notes"
+                          className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground h-20"
                         />
                       </div>
+                    </>
+                  );
+                })()}
 
-                      <div>
-                        <label className="block text-sm font-medium text-foreground mb-2">Received Date</label>
-                        <input
-                          type="date"
-                          value={formData.receivedDate}
-                          onChange={(e) => setFormData({ ...formData, receivedDate: e.target.value })}
-                          className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="mb-6">
-                      <label className="block text-sm font-medium text-foreground mb-2">Remarks</label>
-                      <textarea
-                        value={formData.remarks}
-                        onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
-                        placeholder="Add any remarks or notes"
-                        className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground h-20"
-                      />
-                    </div>
-                  </>
-                );
-              })()}
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowForm(false);
-                    setSelectedOilType('');
-                    setSelectedProductionIds([]);
-                    setFormData({
-                      receivedBy: '',
-                      receivedDate: new Date().toISOString().split('T')[0],
-                      remarks: '',
-                    });
-                  }}
-                  disabled={loading}
-                >
-                  Cancel
-                </Button>
-                <Button 
-                  onClick={handleReceiptSubmit}
-                  className="bg-primary hover:bg-primary/90"
-                  disabled={!selectedOilType || selectedProductionIds.length === 0 || !formData.receivedBy || loading}
-                >
-                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Confirm Receipt
-                </Button>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setShowForm(false);
+                      setSelectedOilType('');
+                      setSelectedProductionIds([]);
+                      setChemResultsExpanded(false);
+                      setFormData({
+                        receivedBy: '',
+                        receivedDate: new Date().toISOString().split('T')[0],
+                        remarks: '',
+                      });
+                    }}
+                    disabled={loading}
+                  >
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={handleReceiptSubmit}
+                    className="bg-primary hover:bg-primary/90"
+                    disabled={!selectedOilType || selectedProductionIds.length === 0 || !formData.receivedBy || loading}
+                  >
+                    {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Confirm Receipt
+                  </Button>
+                </div>
               </div>
-            </div>
-          </Card>
-        </div>
-      )}
-    </div>
-  );
-};
+            </Card>
+          </div>
+        )}
+      </div>
+    );
+  };
 
 export default OilReceipt;

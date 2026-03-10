@@ -171,11 +171,12 @@ const LabConfirmation = () => {
   // Form state — selectedProduct stores the Oil Type string
   const [selectedProduct, setSelectedProduct] = useState<string>('');
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
-  const [formDetailsExpanded, setFormDetailsExpanded] = useState(false);
+
   const [formData, setFormData] = useState({
     approvedQuantity: '',
     giveFromTankNo: '',
     remarks: '',
+    status: 'approve', // 'approve' or 'reject'
   });
   const [additivesData, setAdditivesData] = useState<any[]>([]);
 
@@ -340,6 +341,7 @@ const LabConfirmation = () => {
       approvedQuantity: '',
       giveFromTankNo: '',
       remarks: '',
+      status: 'approve',
     });
     setAdditivesData([]);
   };
@@ -366,11 +368,11 @@ const LabConfirmation = () => {
 
         const body = {
           productionId,
-          status: 'Confirmed',
+          status: formData.status === 'approve' ? 'Confirmed' : 'Rejected',
           remarks: formData.remarks,
           testParams: {
             approvedQuantity: formData.approvedQuantity,
-            issuedQuantity: formData.approvedQuantity, // save approved qty as issued qty
+            issuedQuantity: formData.status === 'approve' ? formData.approvedQuantity : '0', // save approved qty as issued qty
             giveFromTankNo: formData.giveFromTankNo,
             qaStatus: 'Pass', // default to Pass if approving
             additives: additivesData,
@@ -437,8 +439,9 @@ const LabConfirmation = () => {
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Product Name / Oil Type</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Total Qty (Kg)</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Approval Qty</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Tank No.</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Receive Tank No.</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Given Tank No.</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Lab Results</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Status</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Action</th>
               </tr>
@@ -472,6 +475,26 @@ const LabConfirmation = () => {
                         </td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">
                           {Array.from(new Set(group.products.flatMap(p => p.items.map(i => i.givenFromTankNo)).filter(v => v && v !== '-'))).join(', ') || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm">
+                          {(() => {
+                            // Collect additives from all items in this group (for history items)
+                            const allAdditives = group.products.flatMap(p => 
+                              p.items.flatMap((i: any) => i.additives || [])
+                            );
+                            const uniqueAdditives = Array.from(new Map(allAdditives.map((a: any) => [a.item, a])).values());
+                            if (uniqueAdditives.length === 0) return <span className="text-muted-foreground">-</span>;
+                            return (
+                              <div className="flex flex-wrap gap-1">
+                                {uniqueAdditives.slice(0, 2).map((a: any, idx) => (
+                                  <Badge key={idx} variant="secondary" className="text-[10px] h-4 px-1">
+                                    {a.item}: {a.actual || '?'}
+                                  </Badge>
+                                ))}
+                                {uniqueAdditives.length > 2 && <span className="text-[10px] text-muted-foreground">+{uniqueAdditives.length - 2} more</span>}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="px-4 py-3 text-sm">
                           <Badge variant="outline">Pending</Badge>
@@ -526,14 +549,6 @@ const LabConfirmation = () => {
                     <h3 className="text-lg font-bold text-primary">{selectedProduct}</h3>
                     <p className="text-xs text-muted-foreground">Process lab confirmation and oil issue for the selected oil type.</p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setFormDetailsExpanded(!formDetailsExpanded)}
-                    className="p-1 h-auto"
-                  >
-                    {formDetailsExpanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
-                  </Button>
                 </div>
               </div>
 
@@ -578,56 +593,6 @@ const LabConfirmation = () => {
                         </p>
                       </div>
                     </div>
-
-                    {/* Order Details — grouped by product, collapsible */}
-                    {formDetailsExpanded && (
-                      <div className="mb-6 space-y-3 animate-in fade-in duration-300">
-                        {group.products.map((prod, pi) => (
-                          <div key={pi} className="border border-border rounded-lg overflow-hidden">
-                            {/* Product sub-header */}
-                            <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
-                              <span className="text-sm font-semibold text-foreground">
-                                {prod.productName}{prod.packingSize ? ' ' + prod.packingSize : ''}
-                              </span>
-                              <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                                <span>Stock: {prod.availableStock}</span>
-                              </div>
-                            </div>
-                            <table className="w-full text-sm">
-                              <thead className="bg-muted/20 border-b border-border">
-                                <tr>
-                                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Select</th>
-                                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Timestamp</th>
-                                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Production ID</th>
-                                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Indent Qty (Kg)</th>
-                                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Tank No.</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-border bg-background">
-                                {prod.items.map((item: ConfirmItem, idx: number) => (
-                                  <tr key={idx} className="hover:bg-muted/30">
-                                    <td className="px-3 py-2">
-                                      <input
-                                        type="checkbox"
-                                        checked={selectedItems.includes(item.id)}
-                                        onChange={() => handleItemToggle(item.id)}
-                                        className="w-4 h-4 rounded border-primary text-primary"
-                                      />
-                                    </td>
-                                    <td className="px-3 py-2 text-xs text-muted-foreground">
-                                      {item.approvalDate ? new Date(item.approvalDate).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
-                                    </td>
-                                    <td className="px-3 py-2 font-mono text-xs">{item.id}</td>
-                                    <td className="px-3 py-2">{formatNumber(item.totalWeightKg)}</td>
-                                    <td className="px-3 py-2">{item.tankNo || '-'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        ))}
-                      </div>
-                    )}
 
                     {/* Chemical Additives Section */}
                     {(selectedProduct === 'Rice Bran Oil' || selectedProduct === 'Soybean Oil' || selectedProduct === 'Palm Oil') && (
@@ -682,12 +647,25 @@ const LabConfirmation = () => {
                       </div>
                     )}
 
-                    {/* Approved Quantity — from approval stage */}
-                    <div className="mb-6">
-                      <label className="block text-sm font-medium text-foreground mb-2">Approved Quantity (Kg) <span className="text-xs text-muted-foreground">(from Indent Approval stage)</span></label>
-                      <p className="w-full px-3 py-2 border border-border rounded-lg bg-muted/20 font-bold text-primary text-lg">
-                        {formData.approvedQuantity ? formatNumber(parseFloat(formData.approvedQuantity)) : '-'} Kg
-                      </p>
+                    {/* Approved Quantity & Status Dropdown */}
+                    <div className="mb-6 grid grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-sm font-medium text-foreground mb-2">Approved Quantity (Kg) <span className="text-xs text-muted-foreground">(from Indent Approval stage)</span></label>
+                        <p className="w-full px-3 py-2 border border-border rounded-lg bg-muted/20 font-bold text-primary text-lg">
+                          {formData.approvedQuantity ? formatNumber(parseFloat(formData.approvedQuantity)) : '-'} Kg
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-foreground mb-2">Status</label>
+                        <select
+                          value={formData.status}
+                          onChange={e => setFormData({ ...formData, status: e.target.value })}
+                          className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground h-11.5"
+                        >
+                          <option value="approve">Approve</option>
+                          <option value="reject">Reject</option>
+                        </select>
+                      </div>
                     </div>
 
                     {/* Remarks */}
@@ -708,10 +686,10 @@ const LabConfirmation = () => {
                 <Button variant="outline" onClick={resetForm}>Cancel</Button>
                 <Button
                   onClick={handleConfirmSubmit}
-                  className="bg-primary hover:bg-primary/90"
+                  className={formData.status === 'approve' ? 'bg-primary hover:bg-primary/90' : 'bg-red-600 hover:bg-red-700'}
                   disabled={!selectedProduct || selectedItems.length === 0}
                 >
-                  Issue Approved Batch
+                  {formData.status === 'approve' ? 'Issue Approved Batch' : 'Reject Batch'}
                 </Button>
               </div>
             </div>

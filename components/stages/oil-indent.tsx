@@ -23,6 +23,7 @@ import {
 interface ExtendedOilIndentItem extends OilIndentItem {
   packingWeight?: number;
   totalWeightKg?: number;
+  remarks?: string;
 }
 
 interface AggregatedProduct {
@@ -103,6 +104,7 @@ const OilIndent = () => {
     requiredQtyKg: 0,
     remainingQtyKg: 0,
     tankNo: '',
+    remarks: '',
   });
 
   const [addDataForm, setAddDataForm] = useState({
@@ -169,7 +171,8 @@ const OilIndent = () => {
             createdAt: item.createdAt,
             status: 'Submitted',
             packingWeight: 0,
-            totalWeightKg: 0 
+            totalWeightKg: 0,
+            remarks: item.remarks
           }));
         }
 
@@ -345,9 +348,10 @@ const OilIndent = () => {
       selectedOil: oilType,
       indentQuantity: totalQty,
       totalWeightKg: totalKg,
-      requiredQtyKg: remainingKg,
+      requiredQtyKg: totalKg,
       remainingQtyKg: remainingKg,
       tankNo: '',
+      remarks: '',
     });
   };
 
@@ -407,7 +411,8 @@ const OilIndent = () => {
         indentQuantity: formData.requiredQtyKg,
         tankNo: formData.tankNo,
         totalWeightKg: formData.totalWeightKg,
-        requiredQtyKg: formData.requiredQtyKg
+        requiredQtyKg: formData.requiredQtyKg,
+        remarks: formData.remarks
       };
 
       const response = await fetch(`${API_BASE_URL}/production-indent`, {
@@ -428,7 +433,7 @@ const OilIndent = () => {
       setShowIndentForm(false);
       setSelectedProduct('');
       setSelectedParties([]);
-      setFormData({ selectedOil: '', indentQuantity: 0, totalWeightKg: 0, requiredQtyKg: 0, remainingQtyKg: 0, tankNo: '' });
+      setFormData({ selectedOil: '', indentQuantity: 0, totalWeightKg: 0, requiredQtyKg: 0, remainingQtyKg: 0, tankNo: '', remarks: '' });
 
       // Re-fetch so the remaining qty is recalculated correctly
       const pendingRes = await fetch(`${API_BASE_URL}/oil-indent/pending`);
@@ -473,6 +478,7 @@ const OilIndent = () => {
           status: 'Approved' as const,
           packingWeight: 0,
           totalWeightKg: 0,
+          remarks: item.remarks
         }));
 
         setIndents([...transformedPending, ...transformedHistory]);
@@ -601,6 +607,7 @@ const OilIndent = () => {
                                           <th className="px-3 py-2 text-left font-medium text-muted-foreground">Order Qty</th>
                                           <th className="px-3 py-2 text-left font-medium text-muted-foreground">Total Weight (Kg)</th>
                                           <th className="px-3 py-2 text-left font-medium text-muted-foreground">Packing Type</th>
+                                          {activeTab === 'history' && <th className="px-3 py-2 text-left font-medium text-muted-foreground">Remarks</th>}
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-border/50 bg-background">
@@ -610,9 +617,10 @@ const OilIndent = () => {
                                               {order.createdAt ? new Date(order.createdAt).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
                                             </td>
                                             <td className="px-3 py-2">{order.orderRef}</td>
-                                            <td className="px-3 py-2">{order.oilRequired}</td>
-                                            <td className="px-3 py-2">{formatNumber(order.totalWeightKg)}</td>
+                                            <td className="px-3 py-2 font-mono font-bold text-primary">{order.oilRequired}</td>
+                                            <td className="px-3 py-2 font-bold">{formatNumber(order.totalWeightKg)}</td>
                                             <td className="px-3 py-2">{order.packingType}</td>
+                                            {activeTab === 'history' && <td className="px-3 py-2 text-muted-foreground italic text-xs max-w-50 truncate" title={order.remarks}>{order.remarks || '-'}</td>}
                                           </tr>
                                         ))}
                                       </tbody>
@@ -730,7 +738,7 @@ const OilIndent = () => {
                       <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-300 flex flex-col justify-center">
                         <span className="text-sm font-semibold mb-2 text-yellow-700 dark:text-yellow-400 uppercase tracking-wider">Remaining Indent Qty</span>
                         <div className="text-xl font-bold text-yellow-600 dark:text-yellow-400">
-                          {formatNumber(formData.remainingQtyKg)} Kg
+                          {formatNumber(Math.max(0, formData.remainingQtyKg - formData.requiredQtyKg))} Kg
                         </div>
                       </div>
                       <div className="p-4 bg-muted/30 rounded-lg border border-border flex flex-col justify-center">
@@ -739,14 +747,17 @@ const OilIndent = () => {
                           <input 
                             type="number" 
                             className="bg-background border border-border rounded-md px-3 py-2 text-xl font-bold text-primary w-[130px] outline-none focus:ring-2 focus:ring-primary/50"
-                            value={formData.requiredQtyKg === 0 ? '' : formData.requiredQtyKg}
+                            value={formData.requiredQtyKg === 0 ? "" : formData.requiredQtyKg}
                             onChange={(e) => {
-                              const val = Number(e.target.value);
+                              let val = e.target.value === "" ? 0 : Number(e.target.value);
                               if (val > formData.remainingQtyKg) {
-                                alert(`Cannot indent more than remaining quantity (${formData.remainingQtyKg} Kg)`);
-                                return;
+                                val = formData.remainingQtyKg;
                               }
                               setFormData({...formData, requiredQtyKg: val});
+                            }}
+                            onFocus={(e) => {
+                              // Select text on focus for easier editing
+                              e.target.select();
                             }}
                             max={formData.remainingQtyKg}
                           />
@@ -867,6 +878,18 @@ const OilIndent = () => {
                       <option value="2">Tank 2</option>
                       <option value="3">Tank 3</option>
                     </select>
+                  </div>
+                  
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-foreground mb-2">
+                      Remarks
+                    </label>
+                    <textarea
+                      value={formData.remarks}
+                      onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
+                      placeholder="Add any internal remarks here..."
+                      className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground focus:ring-2 focus:ring-primary/50 outline-none h-20 resize-none"
+                    />
                   </div>
 
                   <div className="flex justify-end gap-3 pt-4 border-t border-border">

@@ -45,6 +45,7 @@ interface ProductionEntryItem {
     qty_required: number;
     qty_allocated: number;
   }>;
+  selectedSkus?: Array<{ skuName: string, qty: number }>;
   bomConsumption?: BOMConsumption[];
 }
 
@@ -113,7 +114,6 @@ const ProductionEntry = () => {
   const [selectedOilType, setSelectedOilType] = useState<string>('');
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [remarks, setRemarks] = useState('');
-  const [formDetailsExpanded, setFormDetailsExpanded] = useState(false);
   
   // Per-production ID actual quantities
   const [actualQtys, setActualQtys] = useState<Record<string, string>>({});
@@ -156,6 +156,7 @@ const ProductionEntry = () => {
                 actualQty: Number(item.actual_qty || 0),
                 remarks: item.remarks,
                 bom: item.bom || [],
+                selectedSkus: item.selected_skus || [],
                 bomConsumption: item.bom_consumption || []
              };
           }
@@ -174,7 +175,8 @@ const ProductionEntry = () => {
             tankNo: item.tank_no || '-',
             givenTankNo: item.given_from_tank_no || '-',
             status: 'Pending',
-            bom: item.bom || []
+            bom: item.bom || [],
+            selectedSkus: item.selected_skus || []
           };
         });
         setEntries(mappedData);
@@ -235,7 +237,6 @@ const ProductionEntry = () => {
     }
 
     try {
-      // Find the group and products to distribute values
       const group = oilTypeGroups.find(g => g.type === selectedOilType);
       if (!group) return;
 
@@ -249,18 +250,8 @@ const ProductionEntry = () => {
 
         for (const item of productItems) {
           const ratio = totalPlanned > 0 ? item.plannedQty / totalPlanned : 1 / productItems.length;
-          
-          // Distribute actual qty produced
           const itemActualQty = Number((totalActualProduced * ratio).toFixed(2));
           
-          // Distribute the oil qty used for this production run
-          // If the user produces partial, we should probably let them specify the oil_qty used.
-          // For now, let's assume actualQty produced is the same as oilQty used if it's 1:1, 
-          // or just use the proportion of oil qty.
-          // The user specifically asked for "remaining produced qty" tracking.
-          const itemOilUsed = Number((item.plannedQty * (itemActualQty / (totalActualProduced || 1))).toFixed(2));
-
-          // Distribute BOM consumption
           const itemBOM = totalBOM.map(b => ({
             ...b,
             planned: Number((b.planned * ratio).toFixed(2)),
@@ -275,7 +266,7 @@ const ProductionEntry = () => {
             body: JSON.stringify({
               productionId: item.production_id,
               receiptId: item.receiptId,
-              oilQty: itemActualQty, // Using produced qty as basis for oil consumption tracking
+              oilQty: itemActualQty,
               actualQty: itemActualQty,
               remarks,
               processedBy: 'Production Head',
@@ -293,7 +284,6 @@ const ProductionEntry = () => {
       setRemarks('');
       setAggregatedQtys({});
       setAggregatedBom({});
-      setFormDetailsExpanded(false);
       fetchData();
     } catch (error) {
       console.error('Error submitting production entries:', error);
@@ -310,7 +300,6 @@ const ProductionEntry = () => {
         description="Track production output and material consumption"
       />
 
-      {/* Tabs */}
       <div className="flex gap-2 mb-6">
         <button
           onClick={() => setActiveTab('pending')}
@@ -342,8 +331,8 @@ const ProductionEntry = () => {
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Type of Oil</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Item(s) to be packed</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Oil Qty (KG)</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Given Tank No.</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Tank No.</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-orange-600">Given Tank No.</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold">Receive Tank No.</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Status</th>
                 {activeTab === 'history' && <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Actual Qty (KG)</th>}
                 <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Action</th>
@@ -354,11 +343,9 @@ const ProductionEntry = () => {
             ) : (
               <tbody className="divide-y divide-border">
                 {oilTypeGroups.map((group, gIdx) => {
-                  const uniqueItemsPacked = Array.from(new Set(group.products.flatMap(p => {
-                      if (!p.productName) return [];
-                      const parts = p.productName.split(' ');
-                      return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
-                    }))).join(', ') || '-';
+                  const uniqueItemsPacked = Array.from(new Set(group.products.flatMap(p => 
+                      p.items.flatMap(i => (i.selectedSkus || []).map(s => s.skuName))
+                    ))).join(', ') || '-';
 
                   return (
                     <tr key={gIdx} className="hover:bg-card/50 transition-colors">
@@ -366,7 +353,7 @@ const ProductionEntry = () => {
                         {group.type}
                       </td>
                       <td className="px-4 py-3 text-sm text-foreground">
-                        <Badge variant="outline" className="font-mono">{uniqueItemsPacked}</Badge>
+                        <Badge variant="outline" className="font-mono whitespace-normal">{uniqueItemsPacked}</Badge>
                       </td>
                       <td className="px-4 py-3 text-base font-bold text-foreground font-mono">
                          <div className="flex flex-col">
@@ -402,14 +389,12 @@ const ProductionEntry = () => {
                               const allIds = group.products.flatMap(p => p.items.map(i => i.id));
                               setSelectedItems(allIds);
                               
-                              // Initialize aggregated quantities and BOM consumptions
                               const initialAggQtys: Record<string, string> = {};
                               const initialAggBOMs: Record<string, BOMConsumption[]> = {};
 
                               group.products.forEach(p => {
                                   initialAggQtys[p.productKey] = p.items.reduce((acc, i) => acc + i.plannedQty, 0).toString();
                                   
-                                  // Aggregate BOM by material name
                                   const bomMap: Record<string, BOMConsumption> = {};
                                   p.items.forEach(item => {
                                       item.bom.forEach(b => {
@@ -472,24 +457,24 @@ const ProductionEntry = () => {
 
                 return (
                   <>
-                    <div className="bg-muted/30 p-4 rounded-lg border border-border">
-                        <h3 className="text-lg font-bold text-primary">{selectedOilType}</h3>
-                        <p className="text-xs text-muted-foreground">Track production output and verify BOM consumption details.</p>
+                    <div className="bg-muted/30 p-4 rounded-lg border border-border flex justify-between items-center">
+                        <div>
+                          <h3 className="text-lg font-bold text-primary">{selectedOilType}</h3>
+                          <p className="text-xs text-muted-foreground">Track production output and verify BOM consumption details.</p>
+                        </div>
+                        <div className="text-right flex gap-6">
+                           <div>
+                             <p className="text-xs text-muted-foreground uppercase">Given Tank</p>
+                             <p className="text-sm font-bold text-orange-600">{group.products[0]?.items[0]?.givenTankNo || '-'}</p>
+                           </div>
+                           <div>
+                             <p className="text-xs text-muted-foreground uppercase">Receive Tank</p>
+                             <p className="text-sm font-bold text-foreground">{group.products[0]?.items[0]?.tankNo || '-'}</p>
+                           </div>
+                        </div>
                     </div>
 
                     <div className="space-y-4">
-                      <div className="flex justify-between items-center">
-                        <h3 className="text-sm font-bold text-foreground">Production Details</h3>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setFormDetailsExpanded(!formDetailsExpanded)}
-                          className="h-8 py-0 underline text-primary"
-                        >
-                          {formDetailsExpanded ? 'Hide Individual Details' : 'Show Individual Details'}
-                        </Button>
-                      </div>
-
                       {group.products.map((prod, pi) => {
                         const checkedItems = prod.items.filter(i => selectedItems.includes(i.id));
                         if (checkedItems.length === 0) return null;
@@ -501,7 +486,7 @@ const ProductionEntry = () => {
                           <div key={pi} className="border border-border rounded-lg overflow-hidden flex flex-col">
                             <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
                               <span className="text-sm font-semibold text-foreground">
-                                {prod.productName}{prod.packingSize ? ' ' + prod.packingSize : ''}
+                                {prod.items.find(i => selectedItems.includes(i.id))?.selectedSkus?.map(s => s.skuName).join(', ') || prod.productName}
                               </span>
                               <div className="flex items-center gap-6">
                                 <div className="text-xs flex flex-col items-end">
@@ -527,7 +512,6 @@ const ProductionEntry = () => {
                             </div>
 
                             <div className="p-4 space-y-4">
-                              {/* Always Visible Aggregated BOM Table */}
                               <div className="mt-2 text-xs font-semibold text-muted-foreground uppercase">BOM Consumption & Variance / Wastage</div>
                               <div className="overflow-x-auto">
                                 <table className="w-full text-xs bg-background border border-border">
@@ -542,8 +526,7 @@ const ProductionEntry = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-border">
-                                        {(aggregatedBom[prod.productKey] || []).map((bom, bIdx) => {
-                                            return (
+                                        {(aggregatedBom[prod.productKey] || []).map((bom, bIdx) => (
                                                 <tr key={bIdx}>
                                                     <td className="px-2 py-1 font-medium">{bom.material}</td>
                                                     <td className="px-2 py-1">{formatNumber(bom.planned)}</td>
@@ -600,35 +583,11 @@ const ProductionEntry = () => {
                                                         />
                                                     </td>
                                                 </tr>
-                                            );
-                                        })}
+                                            )
+                                        )}
                                     </tbody>
                                 </table>
                               </div>
-
-                              {/* Click Show Details to see Production ID / Tank Info */}
-                              {formDetailsExpanded && (
-                                <div className="bg-muted/20 p-3 rounded-lg border border-border mt-2">
-                                  <div className="text-xs font-bold mb-2 uppercase text-muted-foreground">Individual Production Details</div>
-                                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {checkedItems.map((item, idx) => (
-                                      <div key={idx} className="bg-background p-2 rounded border border-border">
-                                        <div className="flex justify-between items-start mb-1">
-                                          <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-mono font-bold">{item.production_id}</span>
-                                          <span className="text-[10px] text-muted-foreground flex flex-col items-end">
-                                              <span>Rem Oil: {formatNumber(item.plannedQty)} KG</span>
-                                              {item.totalReceivedQty > item.plannedQty && (
-                                                  <span className="text-[8px]">Rec: {formatNumber(item.totalReceivedQty)} KG</span>
-                                              )}
-                                          </span>
-                                        </div>
-                                        <div className="text-[11px] font-semibold truncate mb-1">{item.partyName}</div>
-                                        <div className="text-[10px] text-muted-foreground">Tank: {item.givenTankNo} → {item.tankNo}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
                             </div>
                           </div>
                         );

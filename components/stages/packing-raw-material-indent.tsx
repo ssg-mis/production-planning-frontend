@@ -111,6 +111,12 @@ const PackingRawMaterialIndent = () => {
   
   // Custom manual tracking for allocate to qty edits mapped down to exactly: `[productName_itemName]: calculatedQty`
   const [bomAllocations, setBomAllocations] = useState<Record<string, number>>({});
+  const [skus, setSkus] = useState<string[]>([]);
+  const [selectedSku, setSelectedSku] = useState<string>('');
+  const [manualQty, setManualQty] = useState<number>(0);
+  const [skuBom, setSkuBom] = useState<any[]>([]);
+  const [skuLoading, setSkuLoading] = useState(false);
+  const [selectedSkus, setSelectedSkus] = useState<Array<{ skuName: string; qty: number; bom: any[] }>>([]);
 
   const fetchIndents = async () => {
     setLoading(true);
@@ -265,93 +271,140 @@ const PackingRawMaterialIndent = () => {
     );
   };
 
+  const fetchSkus = async (oilType: string) => {
+    setSkuLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/packing-raw-material/skus?oilType=${encodeURIComponent(oilType)}`);
+      const data = await response.json();
+      setSkus(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error fetching SKUs:', error);
+    } finally {
+      setSkuLoading(false);
+    }
+  };
+
+  const fetchSkuBom = async (skuName: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/packing-raw-material/bom?skuName=${encodeURIComponent(skuName)}`);
+      const data = await response.json();
+      setSkuBom(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error fetching SKU BOM:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (showIndentForm && selectedOilType) {
+      fetchSkus(selectedOilType);
+      setSelectedSku('');
+      setManualQty(0);
+      setSkuBom([]);
+      setBomAllocations({});
+      setSelectedSkus([]);
+    }
+  }, [showIndentForm, selectedOilType]);
+
+  useEffect(() => {
+    if (selectedSku) {
+      fetchSkuBom(selectedSku);
+    } else {
+      setSkuBom([]);
+    }
+  }, [selectedSku]);
+
+  const addSkuToList = () => {
+    if (!selectedSku || manualQty <= 0) {
+      alert('Please select an SKU and enter a valid quantity');
+      return;
+    }
+    setSelectedSkus(prev => [...prev, { skuName: selectedSku, qty: manualQty, bom: skuBom }]);
+    setSelectedSku('');
+    setManualQty(0);
+    setSkuBom([]);
+  };
+
+  const removeSkuFromList = (index: number) => {
+    setSelectedSkus(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Aggregate BOM items across all selected SKUs
+  const getAggregatedBom = () => {
+    const aggregated: Record<string, { rmname: string, rmqty: number, rmunit: string }> = {};
+    
+    selectedSkus.forEach(item => {
+      item.bom.forEach(b => {
+        const perUnit = parseFloat(b.rmqty?.replace(/,/g, '') || '0');
+        const required = isNaN(perUnit) ? 0 : perUnit * item.qty;
+        
+        if (aggregated[b.rmname]) {
+          aggregated[b.rmname].rmqty += required;
+        } else {
+          aggregated[b.rmname] = {
+            rmname: b.rmname,
+            rmqty: required,
+            rmunit: b.rmunit
+          };
+        }
+      });
+    });
+    
+    return Object.values(aggregated);
+  };
+
+  const totalManualQty = selectedSkus.reduce((sum, s) => sum + s.qty, 0);
+  const aggregatedBom = getAggregatedBom();
+
   const handleSubmit = async () => {
-    if (selectedOrders.length === 0) {
-      alert('Please select at least one order');
+    if (selectedSkus.length === 0) {
+      alert('Please add at least one SKU');
       return;
     }
 
     try {
-      const ordersToSubmit = indents.filter(i => selectedOrders.includes(i.id));
-      const errors: string[] = [];
-      const alreadyDone: string[] = [];
-      
-      for (const order of ordersToSubmit) {
-        const payload = {
-          productionId: order.id,
-          oilQty: order.balanceKg, // Use this specific order's qty, not total
-          bomItems: order.bom.map(b => {
-              const perUnit = parseFloat(b.rmqty?.replace(/,/g, '') || '0');
-              const defaultTotalReq = isNaN(perUnit) ? 0 : Math.round(perUnit * order.balanceQty * 100) / 100;
-
-              // Calculate final allocated by summing contributions from each SKU this order belongs to
-              let finalAllocated = 0;
-              let hasManualAllocation = false;
-
-              const orderSkus = order.skuBoms || [];
-              orderSkus.forEach(os => {
-                const skuCount = orderSkus.length || 1;
-                const splitKg = order.balanceKg / skuCount;
-                
-                const totalSkuKg = indents
-                  .filter(i => selectedOrders.includes(i.id))
-                  .reduce((sum, i) => {
-                    const match = (i.skuBoms || []).find(s => s.skuName === os.skuName);
-                    if (match) return sum + (i.balanceKg / (i.skuBoms?.length || 1));
-                    return sum;
-                  }, 0);
-
-                const groupKey = `SKU_${os.skuName}_${b.rmname}`;
-                if (bomAllocations[groupKey] !== undefined) {
-                  hasManualAllocation = true;
-                  if (totalSkuKg > 0) {
-                    finalAllocated += (splitKg / totalSkuKg) * bomAllocations[groupKey];
-                  }
-                } else {
-                  finalAllocated += isNaN(perUnit) ? 0 : Math.round(perUnit * splitKg * 100) / 100;
-                }
-              });
-
-              if (!hasManualAllocation) finalAllocated = defaultTotalReq;
-
-              return {
-                itemName: b.rmname,
-                qtyRequired: Math.round(defaultTotalReq * 100) / 100,
-                qtyAllocated: Math.round(finalAllocated * 100) / 100,
-              };
-            })
-          };
-
-        const response = await fetch(`${API_BASE_URL}/packing-raw-material`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-
-        if (response.status === 409) {
-          alreadyDone.push(order.id);
-        } else if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          errors.push(`${order.id}: ${errData.details || errData.error || 'Unknown error'}`);
-        }
+      const group = grouped.find(g => g.type === selectedOilType);
+      if (!group || group.products.length === 0 || group.products[0].orders.length === 0) {
+        alert('Internal error: Could not find parent order');
+        return;
       }
 
-      if (errors.length > 0) {
-        alert(`❌ Errors:\n${errors.join('\n')}`);
-      } else if (alreadyDone.length > 0) {
-        alert(`⚠️ Already submitted: ${alreadyDone.join(', ')}\n\nThese were skipped (already processed).`);
-        setShowIndentForm(false);
-        setSelectedOrders([]);
-        fetchIndents();
+      const productionId = group.products[0].orders[0].id;
+
+      const payload = {
+        productionId: productionId,
+        oilQty: totalManualQty,
+        bomItems: aggregatedBom.map(b => {
+          const groupKey = `AGGR_${b.rmname}`;
+          const finalAllocated = bomAllocations[groupKey] !== undefined ? bomAllocations[groupKey] : b.rmqty;
+
+          return {
+            itemName: b.rmname,
+            qtyRequired: Math.round(b.rmqty * 100) / 100,
+            qtyAllocated: Math.round(finalAllocated * 100) / 100,
+          };
+        }),
+        selectedSkus: selectedSkus.map(s => ({ skuName: s.skuName, qty: s.qty }))
+      };
+
+      const response = await fetch(`${API_BASE_URL}/packing-raw-material`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.status === 409) {
+        alert(`❌ Indent for this production cycle already exists.`);
+      } else if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        alert(`❌ Error: ${errData.details || errData.error || 'Unknown error'}`);
       } else {
-        alert('✅ Packing indents created successfully!');
+        alert('✅ Packing indent created successfully!');
         setShowIndentForm(false);
-        setSelectedOrders([]);
         fetchIndents();
       }
     } catch (error) {
-      console.error('Error submitting packing indents:', error);
-      alert('❌ Error submitting packing indents');
+      console.error('Error submitting packing indent:', error);
+      alert('❌ Error submitting packing indent');
     }
   };
 
@@ -492,10 +545,10 @@ const PackingRawMaterialIndent = () => {
                               {formatNumber(group.totalReceivedKg)} Kg
                             </p>
                           </div>
-                          <div className="p-3 bg-orange-50/50 border border-orange-200/50 rounded-lg">
+                           <div className="p-3 bg-orange-50/50 border border-orange-200/50 rounded-lg">
                             <span className="text-xs text-orange-600/80 uppercase font-semibold">Total Balance Qty (Kg):</span>
                             <p className="font-bold text-foreground text-sm">
-                              {formatNumber(group.totalBalanceKg)} Kg
+                              {formatNumber(group.totalBalanceKg - totalManualQty)} Kg
                             </p>
                           </div>
                           <div className="p-3 bg-blue-50/50 border border-blue-100/50 rounded-lg">
@@ -513,156 +566,134 @@ const PackingRawMaterialIndent = () => {
                         </div>
                     </div>
 
-                    {/* Order Details — each order, each SKU individually */}
-                    <div>
-                      <div className="flex justify-between items-center mb-2">
-                        <h3 className="text-sm font-bold text-foreground">Order Details &amp; BOM</h3>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setFormDetailsExpanded(!formDetailsExpanded)}
-                          className="h-8 py-0 underline text-primary"
-                        >
-                          {formDetailsExpanded ? 'Hide Details' : 'Show Details'}
-                        </Button>
+                    {/* SKU Selection and Quantity section */}
+                    <div className="flex flex-col gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="p-4 bg-muted/30 rounded-lg border border-border">
+                          <label className="text-xs font-semibold mb-2 block text-muted-foreground uppercase tracking-wider">Select SKU Name</label>
+                          <select
+                            value={selectedSku}
+                            onChange={(e) => setSelectedSku(e.target.value)}
+                            className="w-full p-2 rounded-md border border-border bg-background"
+                            disabled={skuLoading}
+                          >
+                            <option value="">-- Select SKU --</option>
+                            {skus.map(sku => (
+                              <option key={sku} value={sku}>{sku}</option>
+                            ))}
+                          </select>
+                          {skuLoading && <p className="text-[10px] text-primary mt-1 animate-pulse">Fetching SKUs...</p>}
+                        </div>
+
+                        <div className="p-4 bg-muted/30 rounded-lg border border-border">
+                          <label className="text-xs font-semibold mb-2 block text-muted-foreground uppercase tracking-wider">Enter Quantity (Qty)</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              value={manualQty || ''}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                setManualQty(isNaN(val) ? 0 : val);
+                              }}
+                              placeholder="Enter quantity"
+                              className="grow p-2 rounded-md border border-border bg-background"
+                            />
+                            <Button onClick={addSkuToList} type="button" size="sm" className="h-10">
+                              <Plus className="h-4 w-4 mr-1" /> Add
+                            </Button>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="space-y-4">
-                        {(() => {
-                          // Flatten all SKUs across the group's products
-                          const skuMap: Record<string, { 
-                            skuName: string; 
-                            bom: any[]; 
-                            orders: Array<{ order: RawMaterialIndentItem, splitKg: number }>;
-                            totalSkuKg: number;
-                          }> = {};
-
-                          group.products.forEach(prod => {
-                            const checkedOrders = prod.orders.filter(o => selectedOrders.includes(o.id));
-                            checkedOrders.forEach(order => {
-                              const skus = order.skuBoms || [];
-                              const skuCount = skus.length || 1;
-                              const splitKg = order.balanceKg / skuCount;
-
-                              skus.forEach(sb => {
-                                if (!skuMap[sb.skuName]) {
-                                  skuMap[sb.skuName] = { 
-                                    skuName: sb.skuName, 
-                                    bom: sb.bom, 
-                                    orders: [], 
-                                    totalSkuKg: 0 
-                                  };
-                                }
-                                skuMap[sb.skuName].orders.push({ order, splitKg });
-                                skuMap[sb.skuName].totalSkuKg += splitKg;
-                              });
-                            });
-                          });
-
-                          return Object.values(skuMap).map((skuGroup, si) => {
-                            const groupKeyPrefix = `SKU_${skuGroup.skuName}`;
-
-                            return (
-                              <div key={si} className="border border-border rounded-lg overflow-hidden bg-background shadow-sm">
-                                {/* SKU Header */}
-                                <div className="px-4 py-3 bg-primary/5 border-b border-border flex items-center justify-between">
-                                  <div>
-                                    <span className="text-sm font-bold text-primary">{skuGroup.skuName}</span>
-                                    <p className="text-[10px] text-muted-foreground uppercase mt-0.5">Individual SKU Section</p>
-                                  </div>
-                                  <div className="text-right">
-                                    <span className="text-xs text-muted-foreground">Total Received: </span>
-                                    <span className="text-sm font-bold text-foreground">{formatNumber(skuGroup.totalSkuKg)} Kg</span>
-                                  </div>
-                                </div>
-
-                                {/* Orders involved with this SKU (mini-table) */}
-                                {formDetailsExpanded && (
-                                  <div className="bg-muted/5 border-b border-border/40">
-                                    <table className="w-full text-[11px]">
-                                      <thead className="bg-muted/10 border-b border-border/20 text-muted-foreground">
-                                        <tr>
-                                          <th className="px-3 py-1 text-left font-medium">Order Ref</th>
-                                          <th className="px-3 py-1 text-right font-medium">Split Kg</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-border/20">
-                                        {skuGroup.orders.map((oItem, oi) => (
-                                          <tr key={oi}>
-                                            <td className="px-3 py-1 font-mono">{oItem.order.orderRef}</td>
-                                            <td className="px-3 py-1 text-right font-semibold">{formatNumber(oItem.splitKg)}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                )}
-
-                                {/* BOM Table or No BOM Message */}
-                                <div className="p-0">
-                                  {!skuGroup.bom || skuGroup.bom.length === 0 ? (
-                                    <div className="p-4 text-center text-xs text-orange-600 bg-orange-50/30 font-medium">
-                                      ⚠️ No Bill of Materials (BOM) items found for this SKU.
-                                    </div>
-                                  ) : (
-                                    <table className="w-full text-sm">
-                                      <thead className="bg-muted/20">
-                                        <tr>
-                                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Raw Material</th>
-                                          <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Qty Per Unit</th>
-                                          <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Required Qty</th>
-                                          <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Allocate Qty</th>
-                                          <th className="px-3 py-2 text-left font-medium text-muted-foreground w-20">Unit</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-border/40">
-                                        {skuGroup.bom.map((bItem: any, bIdx: number) => {
-                                          const perUnit = parseFloat(bItem.rmqty?.replace(/,/g, '') || '0');
-                                          const defaultTotalReq = isNaN(perUnit) ? 0 : perUnit * skuGroup.totalSkuKg;
-                                          const groupKey = `${groupKeyPrefix}_${bItem.rmname}`;
-                                          const currentVal = bomAllocations[groupKey] !== undefined ? bomAllocations[groupKey] : defaultTotalReq;
-                                          return (
-                                            <tr key={bIdx} className="hover:bg-muted/5 transition-colors">
-                                              <td className="px-3 py-2 font-medium text-foreground">{bItem.rmname}</td>
-                                              <td className="px-3 py-2 border-l border-border/40 font-mono text-muted-foreground text-xs">
-                                                {isNaN(perUnit) ? '-' : formatNumber(perUnit)}
-                                              </td>
-                                              <td className="px-3 py-2 border-l border-border/40 font-mono text-muted-foreground text-xs">
-                                                {isNaN(perUnit) ? '-' : formatNumber(defaultTotalReq)}
-                                              </td>
-                                              <td className="px-3 py-2 border-l border-border/40 bg-blue-50/20">
-                                                <input
-                                                  type="number"
-                                                  value={currentVal || ''}
-                                                  onChange={(e) => {
-                                                    let numeric = parseFloat(e.target.value);
-                                                    if (isNaN(numeric) || numeric < 0) numeric = 0;
-                                                    setBomAllocations(prev => ({ ...prev, [groupKey]: numeric }));
-                                                  }}
-                                                  className="w-full px-2 py-1 text-sm border border-border/40 rounded bg-background font-mono shadow-inner outline-none focus:border-primary transition-all"
-                                                />
-                                              </td>
-                                              <td className="px-3 py-2 text-xs text-muted-foreground">{bItem.rmunit}</td>
-                                            </tr>
-                                          );
-                                        })}
-                                      </tbody>
-                                    </table>
-                                  )}
+                      {/* Selected SKUs List */}
+                      {selectedSkus.length > 0 && (
+                        <div className="p-4 bg-muted/20 rounded-lg border border-border">
+                          <p className="text-xs font-semibold mb-3 text-muted-foreground uppercase tracking-wider">Added SKUs</p>
+                          <div className="space-y-2">
+                            {selectedSkus.map((s, idx) => (
+                              <div key={idx} className="flex justify-between items-center bg-background p-2 rounded border border-border text-sm">
+                                <span className="font-medium">{s.skuName}</span>
+                                <div className="flex items-center gap-4">
+                                  <Badge variant="secondary" className="font-mono">{formatNumber(s.qty)}</Badge>
+                                  <Button variant="ghost" size="sm" onClick={() => removeSkuFromList(idx)} className="h-8 w-8 p-0 text-destructive hover:text-destructive/80">
+                                    <X className="h-4 w-4" />
+                                  </Button>
                                 </div>
                               </div>
-                            );
-                          });
-                        })()}
-                      </div>
+                            ))}
+                          </div>
+                          <div className="mt-3 text-right pt-2 border-t border-border/40">
+                            <span className="text-xs text-muted-foreground uppercase font-semibold">Total Quantity: </span>
+                            <span className="text-sm font-bold text-primary">{formatNumber(totalManualQty)}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
+
+                    {/* Aggregated BOM Table */}
+                    {selectedSkus.length > 0 && (
+                      <div className="border border-border rounded-lg overflow-hidden bg-background shadow-sm">
+                        <div className="px-4 py-3 bg-primary/5 border-b border-border flex items-center justify-between">
+                          <div>
+                            <span className="text-sm font-bold text-primary">Aggregated Bill of Materials</span>
+                            <p className="text-[10px] text-muted-foreground uppercase mt-0.5">Combined requirement for all selected SKUs</p>
+                          </div>
+                        </div>
+
+                        <div className="p-0">
+                          {aggregatedBom.length === 0 ? (
+                            <div className="p-4 text-center text-xs text-orange-600 bg-orange-50/30 font-medium">
+                              ⚠️ No BOM items found for the selected SKUs.
+                            </div>
+                          ) : (
+                            <table className="w-full text-sm">
+                              <thead className="bg-muted/20">
+                                <tr>
+                                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Raw Material</th>
+                                  <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Total Required Qty</th>
+                                  <th className="px-3 py-2 text-left font-medium text-muted-foreground border-l border-border/40">Allocate Qty</th>
+                                  <th className="px-3 py-2 text-left font-medium text-muted-foreground w-20">Unit</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-border/40">
+                                {aggregatedBom.map((bItem, bIdx) => {
+                                  const groupKey = `AGGR_${bItem.rmname}`;
+                                  const currentVal = bomAllocations[groupKey] !== undefined ? bomAllocations[groupKey] : bItem.rmqty;
+                                  return (
+                                    <tr key={bIdx} className="hover:bg-muted/5 transition-colors">
+                                      <td className="px-3 py-2 font-medium text-foreground">{bItem.rmname}</td>
+                                      <td className="px-3 py-2 border-l border-border/40 font-mono text-muted-foreground text-xs text-center">
+                                        {formatNumber(bItem.rmqty)}
+                                      </td>
+                                      <td className="px-3 py-2 border-l border-border/40 bg-blue-50/20">
+                                        <input
+                                          type="number"
+                                          value={currentVal || ''}
+                                          onChange={(e) => {
+                                            let numeric = parseFloat(e.target.value);
+                                            if (isNaN(numeric) || numeric < 0) numeric = 0;
+                                            setBomAllocations(prev => ({ ...prev, [groupKey]: numeric }));
+                                          }}
+                                          className="w-full px-2 py-1 text-sm border border-border/40 rounded bg-background font-mono shadow-inner outline-none focus:border-primary transition-all"
+                                        />
+                                      </td>
+                                      <td className="px-3 py-2 text-xs text-muted-foreground">{bItem.rmunit}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </>
                 );
               })()}
 
               <div className="flex justify-end gap-3 pt-4 border-t border-border">
                 <Button variant="outline" onClick={() => setShowIndentForm(false)}>Cancel</Button>
-                <Button onClick={handleSubmit} disabled={selectedOrders.length === 0}>Create Indent</Button>
+                <Button onClick={handleSubmit} disabled={selectedSkus.length === 0}>Create Indent</Button>
               </div>
             </div>
           </Card>

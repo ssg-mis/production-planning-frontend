@@ -30,6 +30,7 @@ interface RawMaterialIssueItem {
     qty_required: number;
     qty_allocated: number;
   }>;
+  selectedSkus?: Array<{ skuName: string, qty: number }>;
 }
 
 interface ProductGroup {
@@ -140,7 +141,8 @@ const RawMaterialIssue = () => {
             tankNo: item.tank_no || '-',
             givenTankNo: item.given_from_tank_no || '-',
             status: 'Pending',
-            bom: item.bom || []
+            bom: item.bom || [],
+            selectedSkus: item.selected_skus || []
           };
         });
         setIssues(mappedData);
@@ -281,11 +283,9 @@ const RawMaterialIssue = () => {
             ) : (
               <tbody className="divide-y divide-border">
                 {oilTypeGroups.map((group, gIdx) => {
-                const uniqueItemsPacked = Array.from(new Set(group.products.flatMap(p => {
-                    if (!p.productName) return [];
-                    const parts = p.productName.split(' ');
-                    return parts.length >= 2 ? [parts[0], parts[1]] : [parts[0]];
-                  }))).join(', ') || '-';
+                const uniqueItemsPacked = Array.from(new Set(group.products.flatMap(p => 
+                    p.items.flatMap(i => (i.selectedSkus || []).map(s => s.skuName))
+                  ))).join(', ') || '-';
 
                 return (
                   <tr key={gIdx} className="hover:bg-card/50 transition-colors">
@@ -357,119 +357,76 @@ const RawMaterialIssue = () => {
 
                 return (
                   <>
-                    <div className="bg-muted/30 p-4 rounded-lg border border-border">
-                        <h3 className="text-lg font-bold text-primary">{selectedOilType}</h3>
-                        <p className="text-xs text-muted-foreground">Review indented BOM items and issue to production.</p>
+                    <div className="bg-muted/30 p-4 rounded-lg border border-border flex justify-between items-center">
+                        <div>
+                          <h3 className="text-lg font-bold text-primary">{selectedOilType}</h3>
+                          <p className="text-xs text-muted-foreground">Review indented BOM items and issue to production.</p>
+                        </div>
+                        <div className="text-right flex gap-6">
+                           <div>
+                             <p className="text-xs text-muted-foreground uppercase">Receive Tank</p>
+                             <p className="text-sm font-bold text-foreground">{group.products[0]?.items[0]?.tankNo || '-'}</p>
+                           </div>
+                           <div>
+                             <p className="text-xs uppercase font-bold text-orange-600">Given Tank</p>
+                             <p className="text-sm font-bold text-orange-600">{group.products[0]?.items[0]?.givenTankNo || '-'}</p>
+                           </div>
+                        </div>
                     </div>
 
-                    <div>
-                      <div className="flex justify-between items-center mb-2">
-                        <h3 className="text-sm font-bold text-foreground">Items & BOM Details</h3>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setFormDetailsExpanded(!formDetailsExpanded)}
-                          className="h-8 py-0 underline text-primary"
-                        >
-                          {formDetailsExpanded ? 'Hide Details' : 'Show Details'}
-                        </Button>
-                      </div>
+                    <div className="space-y-4">
+                      {group.products.map((prod, pi) => {
+                        const checkedItems = prod.items.filter(i => selectedItems.includes(i.id));
+                        
+                        // Consolidate BOM for display
+                        const consolidatedBOM: Record<string, { required: number, allocated: number }> = {};
+                        checkedItems.forEach(item => {
+                           item.bom.forEach(b => {
+                              if (!consolidatedBOM[b.item_name]) {
+                                 consolidatedBOM[b.item_name] = { required: 0, allocated: 0 };
+                              }
+                              consolidatedBOM[b.item_name].required += Number(b.qty_required);
+                              consolidatedBOM[b.item_name].allocated += Number(b.qty_allocated);
+                           });
+                        });
 
-                      <div className="space-y-4">
-                        {group.products.map((prod, pi) => {
-                          const checkedItems = prod.items.filter(i => selectedItems.includes(i.id));
-                          
-                          // Consolidate BOM for display
-                          const consolidatedBOM: Record<string, { required: number, allocated: number }> = {};
-                          checkedItems.forEach(item => {
-                             item.bom.forEach(b => {
-                                if (!consolidatedBOM[b.item_name]) {
-                                   consolidatedBOM[b.item_name] = { required: 0, allocated: 0 };
-                                }
-                                consolidatedBOM[b.item_name].required += Number(b.qty_required);
-                                consolidatedBOM[b.item_name].allocated += Number(b.qty_allocated);
-                             });
-                          });
-
-                          return (
-                            <div key={pi} className="border border-border rounded-lg overflow-hidden flex flex-col">
-                              <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
-                                <span className="text-sm font-semibold text-foreground">
-                                  {prod.productName}{prod.packingSize ? ' ' + prod.packingSize : ''}
-                                </span>
-                                <div className="text-xs text-muted-foreground">
-                                  Selected: <strong>{formatNumber(checkedItems.reduce((acc, c) => acc + c.plannedQty, 0))}</strong>
-                                </div>
+                        return (
+                          <div key={pi} className="border border-border rounded-lg overflow-hidden flex flex-col">
+                            <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
+                              <span className="text-sm font-semibold text-foreground">
+                                {prod.items.find(i => selectedItems.includes(i.id))?.selectedSkus?.map(s => s.skuName).join(', ') || prod.productName}
+                              </span>
+                              <div className="text-xs text-muted-foreground flex gap-4">
+                                <span>Selected: <strong>{formatNumber(checkedItems.reduce((acc, c) => acc + c.plannedQty, 0))} Kg</strong></span>
                               </div>
+                            </div>
 
-                              {formDetailsExpanded && (
-                                <table className="w-full text-sm border-b border-border">
-                                  <thead className="bg-muted/20 border-b border-border">
+                            {Object.keys(consolidatedBOM).length > 0 && checkedItems.length > 0 && (
+                              <div className="p-3 bg-muted/10">
+                                <div className="text-xs font-semibold text-muted-foreground uppercase mb-2">Consolidated BOM items to Issue</div>
+                                <table className="w-full text-sm bg-background rounded border border-border">
+                                  <thead className="bg-muted/20">
                                     <tr>
-                                      <th className="px-3 py-2 text-left font-medium text-muted-foreground w-12">Select</th>
-                                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Production ID</th>
-                                      <th className="px-4 py-2 text-left font-medium text-muted-foreground">Tank Info</th>
-                                      <th className="px-4 py-2 text-left font-medium text-muted-foreground">Party Name</th>
-                                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Qty</th>
+                                      <th className="px-3 py-2 text-left">Material</th>
+                                      <th className="px-3 py-2 text-left">Qty Required</th>
+                                      <th className="px-3 py-2 text-left">Qty Allocated</th>
                                     </tr>
                                   </thead>
-                                  <tbody className="divide-y divide-border bg-background">
-                                    {prod.items.map((item, idx) => (
-                                      <tr key={idx} className="hover:bg-muted/30">
-                                        <td className="px-3 py-2">
-                                          <input
-                                            type="checkbox"
-                                            checked={selectedItems.includes(item.id)}
-                                            onChange={() => {
-                                              setSelectedItems(prev => 
-                                                prev.includes(item.id) ? prev.filter(id => id !== item.id) : [...prev, item.id]
-                                              );
-                                            }}
-                                            className="w-4 h-4 rounded border-primary text-primary"
-                                          />
-                                        </td>
-                                        <td className="px-3 py-2 font-mono text-xs">{item.id}</td>
-                                        <td className="px-4 py-2 text-xs">
-                                          <div className="flex flex-col">
-                                            <span>Tank: {item.tankNo}</span>
-                                            <span className="text-orange-600">Given: {item.givenTankNo}</span>
-                                          </div>
-                                        </td>
-                                        <td className="px-4 py-2">{item.partyName}</td>
-                                        <td className="px-3 py-2 font-semibold text-primary">{formatNumber(item.plannedQty)}</td>
+                                  <tbody className="divide-y divide-border">
+                                    {Object.entries(consolidatedBOM).map(([name, qtys], bi) => (
+                                      <tr key={bi}>
+                                        <td className="px-3 py-2 font-medium">{name}</td>
+                                        <td className="px-3 py-2">{formatNumber(qtys.required)}</td>
+                                        <td className="px-3 py-2 text-green-600 font-bold">{formatNumber(qtys.allocated)}</td>
                                       </tr>
                                     ))}
                                   </tbody>
                                 </table>
-                              )}
-
-                              {Object.keys(consolidatedBOM).length > 0 && checkedItems.length > 0 && (
-                                <div className="p-3 bg-muted/10">
-                                  <div className="text-xs font-semibold text-muted-foreground uppercase mb-2">Consolidated BOM items to Issue</div>
-                                  <table className="w-full text-sm bg-background rounded border border-border">
-                                    <thead className="bg-muted/20">
-                                      <tr>
-                                        <th className="px-3 py-2 text-left">Material</th>
-                                        <th className="px-3 py-2 text-left">Qty Required</th>
-                                        <th className="px-3 py-2 text-left">Qty Allocated</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-border">
-                                      {Object.entries(consolidatedBOM).map(([name, qtys], bi) => (
-                                        <tr key={bi}>
-                                          <td className="px-3 py-2 font-medium">{name}</td>
-                                          <td className="px-3 py-2">{formatNumber(qtys.required)}</td>
-                                          <td className="px-3 py-2 text-green-600 font-bold">{formatNumber(qtys.allocated)}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
 
                     <div>

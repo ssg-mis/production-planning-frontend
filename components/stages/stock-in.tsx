@@ -192,7 +192,19 @@ const StockIn = () => {
                       )}
                       <td className="px-4 py-3 text-sm font-mono font-bold text-primary">{item.production_id}</td>
                       <td className="px-4 py-3 text-sm font-medium">
-                        {item.productName} {item.packingSize && <span className="text-muted-foreground ml-1">({item.packingSize})</span>}
+                        {item.selected_skus && item.selected_skus.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {item.selected_skus.map((sku: any, idx: number) => (
+                              <Badge key={idx} variant="outline" className="font-mono text-[10px] whitespace-normal">
+                                {sku.skuName}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          <>
+                            {item.productName} {item.packingSize && <span className="text-muted-foreground ml-1">({item.packingSize})</span>}
+                          </>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-sm text-foreground">{item.partyName || '-'}</td>
                       <td className="px-4 py-3 text-sm font-semibold">

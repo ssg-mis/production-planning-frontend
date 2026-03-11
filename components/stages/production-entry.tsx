@@ -133,10 +133,17 @@ const ProductionEntry = () => {
       
       const response = await fetch(endpoint);
       const result = await response.json();
+      
+      console.log('[ProductionEntry] API Response:', result);
 
-      if (result && Array.isArray(result)) {
-        const mappedData = result.map((item: any) => {
-          if (activeTab === 'history') {
+      const dataArray = Array.isArray(result.data) 
+        ? result.data 
+        : (Array.isArray(result) ? result : []);
+
+      console.log('[ProductionEntry] Data Array:', dataArray);
+
+      const mappedData = dataArray.map((item: any) => {
+        if (activeTab === 'history') {
              return {
                 id: String(item.receipt_id || item.production_id || Math.random()),
                 production_id: item.production_id,
@@ -161,13 +168,13 @@ const ProductionEntry = () => {
              };
           }
           return {
-            id: String(item.receipt_id || item.production_id),
+            id: String(item.receipt_id || item.id || item.production_id || Math.random()),
             production_id: item.production_id,
-            receiptId: item.receipt_id,
-            productName: item.product_name,
+            receiptId: item.receipt_id || item.id,
+            productName: item.product_name || 'N/A',
             packingSize: item.packing_size || '',
             packingType: item.packing_type || '',
-            partyName: item.party_name,
+            partyName: item.party_name || '-',
             plannedQty: Number(item.oil_qty || 0),
             oilQty: Number(item.oil_qty || 0),
             totalReceivedQty: Number(item.total_received_qty || 0),
@@ -178,9 +185,10 @@ const ProductionEntry = () => {
             bom: item.bom || [],
             selectedSkus: item.selected_skus || []
           };
-        });
-        setEntries(mappedData);
-      }
+      });
+      
+      console.log('[ProductionEntry] Mapped data length:', mappedData.length);
+      setEntries(mappedData);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {

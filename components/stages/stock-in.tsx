@@ -22,8 +22,15 @@ const StockIn = () => {
     try {
       const endpoint = activeTab === 'pending' ? '/pending' : '/history';
       const response = await fetch(`${API_BASE_URL}/stock-in${endpoint}`);
-      const data = await response.json();
-      setItems(Array.isArray(data) ? data : []);
+      const result = await response.json();
+      console.log('[StockIn] API Response:', result);
+      
+      const dataArray = Array.isArray(result.data) 
+        ? result.data 
+        : (Array.isArray(result) ? result : []);
+        
+      console.log('[StockIn] Data Array:', dataArray);
+      setItems(dataArray);
       setSelectedIds([]);
     } catch (error) {
       console.error('Error fetching stock items:', error);

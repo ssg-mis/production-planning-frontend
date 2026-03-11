@@ -26,8 +26,15 @@ const BalanceMaterialReceipt = () => {
     try {
       const endpoint = activeTab === 'pending' ? '/pending' : '/history';
       const response = await fetch(`${API_BASE_URL}/balance-material-receipt${endpoint}`);
-      const data = await response.json();
-      setItems(Array.isArray(data) ? data : []);
+      const result = await response.json();
+      console.log('[BalanceReceipt] API Response:', result);
+      
+      const dataArray = Array.isArray(result.data) 
+        ? result.data 
+        : (Array.isArray(result) ? result : []);
+        
+      console.log('[BalanceReceipt] Data Array:', dataArray);
+      setItems(dataArray);
     } catch (error) {
       console.error('Error fetching balance receipts:', error);
     } finally {

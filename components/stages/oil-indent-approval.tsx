@@ -331,9 +331,7 @@ const OilIndentApproval = () => {
               </tr>
             </thead>
             {loading ? (
-              <tbody className="divide-y divide-border">
-                <tr><td colSpan={6}><TableSkeleton cols={6} rows={5} /></td></tr>
-              </tbody>
+              <TableSkeleton cols={6} rows={5} />
             ) : (
               <tbody className="divide-y divide-border">
                 {oilTypeGroups.map((group, gi) => {

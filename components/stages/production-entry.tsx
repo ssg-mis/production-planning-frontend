@@ -134,8 +134,8 @@ const ProductionEntry = () => {
       const response = await fetch(endpoint);
       const result = await response.json();
 
-      if (result.status === 'success') {
-        const mappedData = result.data.map((item: any) => {
+      if (result && Array.isArray(result)) {
+        const mappedData = result.map((item: any) => {
           if (activeTab === 'history') {
              return {
                 id: String(item.receipt_id || item.production_id || Math.random()),

@@ -109,7 +109,7 @@ const RawMaterialIssue = () => {
       const response = await fetch(endpoint);
       const result = await response.json();
 
-      if (result.status === 'success') {
+      if (result && result.status === 'success' && Array.isArray(result.data)) {
         const mappedData = result.data.map((item: any) => {
           if (activeTab === 'history') {
              return {

@@ -125,7 +125,8 @@ const PackingRawMaterialIndent = () => {
         ? `${API_BASE_URL}/packing-raw-material/pending` 
         : `${API_BASE_URL}/packing-raw-material/history`;
       const response = await fetch(endpoint);
-      const data = await response.json();
+      const result = await response.json();
+      const data = Array.isArray(result) ? result : [];
       
       if (activeTab === 'pending') {
         const mappedData = data.map((item: any) => ({

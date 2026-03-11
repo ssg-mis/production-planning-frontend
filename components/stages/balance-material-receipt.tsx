@@ -27,7 +27,7 @@ const BalanceMaterialReceipt = () => {
       const endpoint = activeTab === 'pending' ? '/pending' : '/history';
       const response = await fetch(`${API_BASE_URL}/balance-material-receipt${endpoint}`);
       const data = await response.json();
-      setItems(data || []);
+      setItems(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching balance receipts:', error);
     } finally {
@@ -139,14 +139,15 @@ const BalanceMaterialReceipt = () => {
                 {activeTab === 'pending' && <th className="px-4 py-3 text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Action</th>}
               </tr>
             </thead>
-            <tbody className="divide-y divide-border bg-background">
-              {loading ? (
-                <TableSkeleton cols={6} rows={5} />
-              ) : items.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No {activeTab} balance receipts found</td>
-                </tr>
-              ) : items.map((item) => (
+            {loading ? (
+              <TableSkeleton cols={6} rows={5} />
+            ) : (
+              <tbody className="divide-y divide-border bg-background">
+                {items.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No {activeTab} balance receipts found</td>
+                  </tr>
+                ) : items.map((item) => (
                 <tr key={item.production_id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3 text-sm font-mono font-bold text-primary">{item.production_id}</td>
                   <td className="px-4 py-3 text-sm font-medium">
@@ -177,8 +178,9 @@ const BalanceMaterialReceipt = () => {
                     </td>
                   )}
                 </tr>
-              ))}
-            </tbody>
+                ))}
+              </tbody>
+            )}
           </table>
         </div>
       </Card>

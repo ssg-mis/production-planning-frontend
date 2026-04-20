@@ -19,13 +19,14 @@ import BalanceMaterialReceipt from '@/components/stages/balance-material-receipt
 import StockIn from '@/components/stages/stock-in';
 import ActualDispatch from '@/components/stages/actual-dispatch';
 import Reports from '@/components/stages/reports';
+import Master from '@/components/stages/master';
 import Settings from '@/components/stages/settings';
 
 type Page =
   | 'dashboard' | 'order-dispatch' | 'oil-indent' | 'oil-indent-approval'
   | 'lab-confirmation' | 'dispatch-planning' | 'oil-receipt' | 'packing-raw-material'
   | 'raw-material-issue' | 'raw-material-receipt' | 'production-entry'
-  | 'balance-material' | 'stock-in' | 'actual-dispatch' | 'reports' | 'settings';
+  | 'balance-material' | 'stock-in' | 'actual-dispatch' | 'reports' | 'master' | 'settings';
 
 function AppContent() {
   const { user, loading } = useAuth();
@@ -61,6 +62,7 @@ function AppContent() {
       case 'stock-in': return <StockIn />;
       case 'actual-dispatch': return <ActualDispatch />;
       case 'reports': return <Reports />;
+      case 'master': return <Master />;
       case 'settings': return <Settings />;
       default: return <Dashboard />;
     }

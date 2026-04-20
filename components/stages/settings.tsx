@@ -26,6 +26,7 @@ const ALL_PAGES = [
   { id: 'balance-material', label: 'Balance Material Receipt' },
   { id: 'stock-in', label: 'Stock In' },
   { id: 'reports', label: 'Reports' },
+  { id: 'master', label: 'Master' },
 ];
 
 const DEFAULT_FORM = {

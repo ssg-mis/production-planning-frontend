@@ -4,7 +4,7 @@ import {
   LayoutDashboard, PackageSearch, Droplet, CheckCircle2, FlaskConical,
   Truck, Inbox, ClipboardList, ArrowUpFromLine, ArrowDownToLine,
   Factory, Scale, Warehouse, BarChart3, Settings, LogOut,
-  ChevronLeft, Menu, X
+  ChevronLeft, Menu, X, BookOpen
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from './auth-context';
@@ -29,6 +29,7 @@ const ALL_NAV_ITEMS = [
   { id: 'balance-material',     label: 'Balance Material Receipt',    icon: Scale },
   { id: 'stock-in',             label: 'Stock In',                    icon: Warehouse },
   { id: 'reports',              label: 'Reports',                     icon: BarChart3 },
+  { id: 'master',               label: 'Master',                      icon: BookOpen },
 ];
 
 export default function Sidebar({ currentPage, setCurrentPage }: SidebarProps) {
